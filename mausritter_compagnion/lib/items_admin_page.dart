@@ -16,10 +16,26 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
 
   static const bucket = 'items'; // bucket Supabase Storage (public conseillé)
 
-  // Catégories autorisées (alignées avec le check DB)
+  // Catégories autorisées (alignées avec la BDD)
   static const categories = ['WEAPON', 'ARMOR', 'AMMO', 'LIGHT', 'RATION', 'OTHER'];
   // Slots compatibles
   static const slots = ['PAW_MAIN', 'PAW_OFF', 'BODY', 'PACK'];
+
+  // Presets visuels
+  static const weaponPresets = <String>[
+    'd6',
+    'd6/d8',
+    'd10',
+    'd8',
+    'Personnalisé…',
+  ];
+  static const armorPresets = <String>[
+    '1 DEF',
+    '2 DEF',
+    '3 DEF',
+    '4 DEF',
+    'Personnalisé…',
+  ];
 
   @override
   void initState() {
@@ -134,6 +150,32 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
     final selected = <String>{...(existing?['compatible_slots']?.cast<String>() ?? <String>[])};
     String? imageUrl = existing?['image_url'];
 
+    // Champs spécifiques
+    String? damage = existing?['damage'] as String?;
+    int? defense;
+final raw = existing?['defense'];
+
+if (raw is int) {
+  defense = raw;
+} else if (raw != null) {
+  defense = int.tryParse(raw.toString());
+} else {
+  defense = null;
+}
+
+    // Contrôleurs pour “Personnalisé…”
+    final dmgCustomCtrl = TextEditingController(text: (damage != null && !weaponPresets.contains(damage)) ? damage : '');
+    final defCustomCtrl = TextEditingController(text: (defense != null && ![1,2,3,4].contains(defense)) ? '$defense' : '');
+
+    // Valeur de preset sélectionnée (ou “Personnalisé…”)
+    String weaponPresetValue = damage == null
+        ? weaponPresets.first
+        : (weaponPresets.contains(damage) ? damage : 'Personnalisé…');
+
+    String armorPresetValue = defense == null
+        ? armorPresets.first
+        : ( [1,2,3,4].contains(defense) ? '${defense!} DEF' : 'Personnalisé…' );
+
     await showModalBottomSheet(
       isScrollControlled: true,
       context: context,
@@ -145,6 +187,80 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
           ),
           child: StatefulBuilder(
             builder: (ctx, setS) {
+              // Widgets conditionnels
+              Widget _weaponSection() {
+                if (category != 'WEAPON') return const SizedBox.shrink();
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 12),
+                    Text('Dégâts (arme)', style: Theme.of(ctx).textTheme.titleSmall),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      value: weaponPresetValue,
+                      items: weaponPresets
+                          .map((d) => DropdownMenuItem(value: d, child: Text(d)))
+                          .toList(),
+                      onChanged: (v) => setS(() {
+                        weaponPresetValue = v!;
+                        if (v == 'Personnalisé…') {
+                          damage = dmgCustomCtrl.text.trim().isEmpty ? null : dmgCustomCtrl.text.trim();
+                        } else {
+                          damage = v;
+                        }
+                      }),
+                      decoration: const InputDecoration(labelText: 'Preset'),
+                    ),
+                    if (weaponPresetValue == 'Personnalisé…') ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: dmgCustomCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Dégâts personnalisés (ex: 2d6, d6+1, d6/d10...)',
+                        ),
+                        onChanged: (v) => setS(()=> damage = v.trim().isEmpty ? null : v.trim()),
+                      ),
+                    ],
+                  ],
+                );
+              }
+
+              Widget _armorSection() {
+                if (category != 'ARMOR') return const SizedBox.shrink();
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 12),
+                    Text('Défense (armure)', style: Theme.of(ctx).textTheme.titleSmall),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      value: armorPresetValue,
+                      items: armorPresets
+                          .map((d) => DropdownMenuItem(value: d, child: Text(d)))
+                          .toList(),
+                      onChanged: (v) => setS(() {
+                        armorPresetValue = v!;
+                        if (v == 'Personnalisé…') {
+                          defense = int.tryParse(defCustomCtrl.text.trim());
+                        } else {
+                          defense = int.parse(v.split(' ').first); // "1 DEF" -> 1
+                        }
+                      }),
+                      decoration: const InputDecoration(labelText: 'Preset'),
+                    ),
+                    if (armorPresetValue == 'Personnalisé…') ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: defCustomCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'DEF personnalisée (entier)'),
+                        onChanged: (v) => setS(()=> defense = int.tryParse(v.trim())),
+                      ),
+                    ],
+                  ],
+                );
+              }
+
               return SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -167,7 +283,20 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     DropdownButtonFormField<String>(
                       value: category,
                       items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                      onChanged: (v) => setS(() => category = v!),
+                      onChanged: (v) => setS(() {
+                        category = v!;
+                        // remise à zéro propre quand on change de catégorie
+                        if (category != 'WEAPON') {
+                          weaponPresetValue = weaponPresets.first;
+                          damage = null;
+                          dmgCustomCtrl.clear();
+                        }
+                        if (category != 'ARMOR') {
+                          armorPresetValue = armorPresets.first;
+                          defense = null;
+                          defCustomCtrl.clear();
+                        }
+                      }),
                       decoration: const InputDecoration(labelText: 'Catégorie'),
                     ),
                     const SizedBox(height: 8),
@@ -188,6 +317,11 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                         );
                       }).toList(),
                     ),
+
+                    // Sections conditionnelles
+                    _weaponSection(),
+                    _armorSection(),
+
                     const SizedBox(height: 12),
                     Row(
                       children: [
@@ -197,13 +331,13 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                           onPressed: () async {
                             final url = await _pickAndUploadImage();
                             if (url != null) {
-                            setS(() => imageUrl = url);
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Image importée ✔')),
-                              );
+                              setS(() => imageUrl = url);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Image importée ✔')),
+                                );
+                              }
                             }
-                          }
                           },
                         ),
                         const SizedBox(width: 12),
@@ -235,32 +369,34 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                           'compatible_slots': selected.toList(),
                           'category': category,
                           'created_by': supa.auth.currentUser!.id,
+                          // On nettoie selon la catégorie
+                          'damage': category == 'WEAPON'? (() {if (damage != null && damage!.isNotEmpty) return damage; final txt = dmgCustomCtrl.text.trim();
+                            return txt.isNotEmpty ? txt : null; }())  : null,
+                          'defense': category == 'ARMOR' ? (defense ?? int.tryParse(defCustomCtrl.text.trim())) : null,
                         };
-                        // Très important : ne pas envoyer image_url si on n'a pas choisi d'image
                         if (imageUrl != null) {
                           payload['image_url'] = imageUrl;
                         }
+
                         try {
                           if (existing == null) {
                             // CREATION
                             await supa.from('items').insert(payload).select();
                           } else {
                             // MODIFICATION
-                            final oldImage = existing['image_url'] as String?; // ancienne URL en BDD
-                            final newImage = imageUrl; // peut être null si l'utilisateur n'a pas re-sélectionné une image
+                            final oldImage = existing['image_url'] as String?;
+                            final newImage = imageUrl;
 
                             await supa.from('items').update(payload).eq('id', existing['id']).select();
 
-                            // Si l'image a réellement changé : supprime l'ancienne du Storage
+                            // Si l'image a changé : supprime l'ancienne
                             if (oldImage != null && newImage != null && oldImage != newImage) {
                               try {
                                 if (oldImage.contains('/object/public/items/')) {
                                   final path = oldImage.split('/object/public/items/').last;
                                   await supa.storage.from(bucket).remove([path]);
                                 }
-                              } catch (_) {
-                                // non bloquant
-                              }
+                              } catch (_) {/* non bloquant */}
                             }
                           }
                           if (context.mounted) Navigator.pop(sheetCtx);
@@ -304,21 +440,17 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                           );
                           if (ok != true) return;
 
-                          // Supprime d'abord l'item
                           await supa.from('items').delete().eq('id', existing['id']);
 
-                          // (Optionnel) supprime le fichier Storage associé
                           try {
                             final url = existing['image_url'] as String?;
                             if (url != null && url.contains('/object/public/items/')) {
                               final path = url.split('/object/public/items/').last;
                               await supa.storage.from(bucket).remove([path]);
                             }
-                          } catch (_) {
-                            // non bloquant si l'image reste
-                          }
+                          } catch (_) {/* non bloquant */}
 
-                          if (context.mounted) Navigator.pop(sheetCtx); // ferme le bottom sheet
+                          if (context.mounted) Navigator.pop(sheetCtx);
                           await _refresh();
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -331,8 +463,10 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     if (existing != null && existing['created_by'] != supa.auth.currentUser!.id)
                       const Padding(
                         padding: EdgeInsets.only(top: 8),
-                        child: Text('Tu ne peux modifier/supprimer que tes propres items.',
-                            style: TextStyle(color: Colors.red)),
+                        child: Text(
+                          'Tu ne peux modifier/supprimer que tes propres items.',
+                          style: TextStyle(color: Colors.red),
+                        ),
                       ),
                   ],
                 ),
@@ -369,6 +503,15 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                   itemBuilder: (ctx, i) {
                     final it = items[i] as Map<String, dynamic>;
                     final isOwner = (it['created_by'] == uid);
+
+                    // Texte dégâts/défense pour l’aperçu
+                    String extra = '';
+                    if (it['category'] == 'WEAPON' && (it['damage'] != null) && '${it['damage']}'.isNotEmpty) {
+                      extra = ' • Dégâts: ${it['damage']}';
+                    } else if (it['category'] == 'ARMOR' && it['defense'] != null) {
+                      extra = ' • DEF: ${it['defense']}';
+                    }
+
                     return ListTile(
                       leading: (it['image_url'] != null)
                           ? ClipRRect(
@@ -383,7 +526,8 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                           : const Icon(Icons.inventory_2_outlined),
                       title: Text(it['name'] ?? ''),
                       subtitle: Text(
-                        'Cat: ${it['category']} • Durabilité: ${it['durability_max']} • Slots: ${(it['compatible_slots'] as List?)?.join(", ") ?? "-"}',
+                        'Cat: ${it['category']} • Durabilité: ${it['durability_max']}'
+                        ' • Slots: ${(it['compatible_slots'] as List?)?.join(", ") ?? "-"}$extra',
                       ),
                       trailing: isOwner ? const Icon(Icons.edit) : const Icon(Icons.lock_outline),
                       onTap: () => isOwner

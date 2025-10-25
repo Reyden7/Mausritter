@@ -39,12 +39,20 @@ class EquippedItem {
   final String? imageUrl;
   final int durabilityMax;
   int durabilityUsed;
+
+  final String category;     // 'WEAPON', 'ARMOR', etc.
+  final String? damage;      // pour WEAPON
+  final int? defense;        // pour ARMOR
+
   EquippedItem({
     required this.id,
     required this.name,
     required this.durabilityMax,
     required this.durabilityUsed,
     this.imageUrl,
+    required this.category,
+    this.damage,
+    this.defense,
   });
 }
 
@@ -56,10 +64,127 @@ String? _asIdString(dynamic v) {
   return null;
 }
 class PlayerSheetPage extends StatefulWidget {
-  const PlayerSheetPage({super.key});
+  final String? characterId; // ← nouveau (nullable pour compatibilité)
+  const PlayerSheetPage({super.key, this.characterId});
   @override
   State<PlayerSheetPage> createState() => _PlayerSheetPageState();
 }
+
+class CharacterPickerPage extends StatefulWidget {
+  const CharacterPickerPage({super.key});
+  @override
+  State<CharacterPickerPage> createState() => _CharacterPickerPageState();
+}
+
+class _CharacterPickerPageState extends State<CharacterPickerPage> {
+  final supa = Supabase.instance.client;
+  bool loading = true;
+  List<Map<String, dynamic>> rows = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => loading = true);
+    final uid = supa.auth.currentUser!.id;
+
+    // si tu veux aussi afficher des fiches partagées, ajoute un OR / view.
+    final data = await supa
+        .from('characters')
+        .select('id,name,level,xp,updated_at,created_at')
+        .eq('owner_id', uid)
+        .order('updated_at', ascending: false);
+    rows = (data as List).cast<Map<String, dynamic>>();
+    setState(() => loading = false);
+  }
+
+  Future<void> _createNew() async {
+    final uid = supa.auth.currentUser!.id;
+    final ins = await supa.from('characters').insert({
+      'owner_id': uid,
+      'name': 'Nouvelle fiche',
+      'background': '',
+      'level': 1,
+      'xp': 0,
+      'stats': {
+        'str': {'max': 10, 'cur': 10},
+        'dex': {'max': 10, 'cur': 10},
+        'wil': {'max': 10, 'cur': 10},
+        'hp' : {'max':  4, 'cur':  4},
+      },
+      'slots': {},
+    }).select('id').single();
+
+    if (!mounted) return;
+    final id = ins['id'] as String;
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => PlayerSheetPage(characterId: id),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Choisir une fiche'),
+        actions: [
+          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _createNew,
+        icon: const Icon(Icons.add),
+        label: const Text('Nouvelle fiche'),
+      ),
+      body: loading
+        ? const Center(child: CircularProgressIndicator())
+        : rows.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Aucune fiche pour le moment.'),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: _createNew,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Créer ma première fiche'),
+                  ),
+                ],
+              ),
+            )
+          : ListView.separated(
+              itemCount: rows.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (_, i) {
+                final r = rows[i];
+                final name = (r['name'] ?? 'Sans nom') as String;
+                final level = r['level'] ?? 1;
+                final xp = r['xp'] ?? 0;
+                final up = r['updated_at'] ?? r['created_at'];
+                return ListTile(
+                  leading: const Icon(Icons.pets),
+                  title: Text(name),
+                  subtitle: Text('Niv $level • XP $xp'),
+                  trailing: up != null ? Text(
+                    DateTime.tryParse(up as String)?.toLocal().toString().substring(0,16) ?? '',
+                    style: const TextStyle(fontSize: 12),
+                  ) : null,
+                  onTap: () {
+                    Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => PlayerSheetPage(characterId: r['id'] as String),
+                    ));
+                  },
+                );
+              },
+            ),
+    );
+  }
+}
+
 
 class _PlayerSheetPageState extends State<PlayerSheetPage> {
   Timer? _saveTimer;
@@ -124,82 +249,90 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
   
 
   // ------- Sélecteur d’items filtrés par slot + déséquipement -------
-  Future<void> _pickItemForSlot(SlotType slot) async {
-    final tag = slotTag(slot);
-    try {
-      final rows = await supa
-          .from('items')
-          .select('id,name,image_url,durability_max,compatible_slots')
-          .contains('compatible_slots', [tag])
-          .order('name');
+  // ------- Sélecteur d’items filtrés par slot + déséquipement -------
+Future<void> _pickItemForSlot(SlotType slot) async {
+  final tag = slotTag(slot);
+  try {
+    final rows = await supa
+        .from('items')
+        .select(
+          'id,name,image_url,durability_max,compatible_slots,category,damage,defense',
+        )
+        .contains('compatible_slots', [tag])
+        .order('name');
 
-      final chosen = await showModalBottomSheet<Map<String, dynamic>>(
-        context: context,
-        isScrollControlled: true,
-        builder: (ctx) => SafeArea(
-          child: DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.7,
-            maxChildSize: 0.95,
-            minChildSize: 0.4,
-            builder: (_, ctl) => Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text('Choisir un item – ${slotLabel(slot)}',
-                      style: Theme.of(ctx).textTheme.titleMedium),
+    final chosen = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.7,
+          maxChildSize: 0.95,
+          minChildSize: 0.4,
+          builder: (_, ctl) => Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text('Choisir un item – ${slotLabel(slot)}',
+                    style: Theme.of(ctx).textTheme.titleMedium),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  controller: ctl,
+                  itemCount: rows.length,
+                  itemBuilder: (_, i) {
+                    final r = rows[i] as Map<String, dynamic>;
+                    return ListTile(
+                      leading: (r['image_url'] != null)
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: Image.network(
+                                r['image_url'],
+                                width: 42, height: 42, fit: BoxFit.cover,
+                              ),
+                            )
+                          : const Icon(Icons.inventory_2_outlined),
+                      title: Text(r['name'] ?? ''),
+                      subtitle: Text('Durabilité ${r['durability_max'] ?? 3}'),
+                      onTap: () => Navigator.pop(ctx, r),
+                    );
+                  },
                 ),
-                const Divider(height: 1),
-                Expanded(
-                  child: ListView.builder(
-                    controller: ctl,
-                    itemCount: rows.length,
-                    itemBuilder: (_, i) {
-                      final r = rows[i] as Map<String, dynamic>;
-                      return ListTile(
-                        leading: (r['image_url'] != null)
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
-                                child: Image.network(
-                                  r['image_url'],
-                                  width: 42, height: 42, fit: BoxFit.cover,
-                                ),
-                              )
-                            : const Icon(Icons.inventory_2_outlined),
-                        title: Text(r['name'] ?? ''),
-                        subtitle: Text('Durabilité ${r['durability_max'] ?? 3}'),
-                        onTap: () => Navigator.pop(ctx, r),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
+      ),
+    );
+
+    if (chosen == null) return;
+
+    setState(() {
+      equipment[slot] = EquippedItem(
+         id: chosen['id'].toString(),
+        name: chosen['name'] ?? 'Item',
+        imageUrl: chosen['image_url'] as String?,
+        durabilityMax: (chosen['durability_max'] as int?) ?? 3,
+        durabilityUsed: 0,
+        category: (chosen['category'] as String?) ?? 'OTHER',
+        damage: chosen['damage'] as String?,
+        defense: (chosen['defense'] is int)
+            ? chosen['defense'] as int
+            : int.tryParse('${chosen['defense'] ?? ''}'),
       );
-
-      if (chosen == null) return;
-
-      setState(() {
-        equipment[slot] = EquippedItem(
-          id: chosen['id'] as String,
-          name: chosen['name'] ?? 'Item',
-          imageUrl: chosen['image_url'] as String?,
-          durabilityMax: (chosen['durability_max'] as int?) ?? 3,
-          durabilityUsed: 0,
-        );
-      });
-      await _saveCharacter();
-      await _updateDurability(slot, 0);
-
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erreur sélection item: $e')),
-      );
-    }
+    });
+    await _saveCharacter();
+    await _updateDurability(slot, 0);
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Erreur sélection item: $e')),
+    );
   }
+}
+
 
   void _unequip(SlotType slot) {
     setState(() => equipment[slot] = null);
@@ -208,68 +341,114 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
 
   // ----------------- Chargement / Sauvegarde -----------------
   Future<void> _loadCharacter() async {
-    final uid = supa.auth.currentUser!.id;
+  final uid = supa.auth.currentUser!.id;
 
+  // 1) si un id est fourni, le charger
+  if (widget.characterId != null) {
     final r = await supa.from('characters')
         .select()
-        .eq('owner_id', uid)
+        .eq('id', widget.characterId!)
         .maybeSingle();
-
     if (r == null) {
-      final ins = await supa.from('characters').insert({
-        'owner_id': uid,
-        'name': '',
-        'background': '',
-        'level': level,
-        'xp': xp,
-        'str_cur': strCur, 'str_max': strMax,
-        'dex_cur': dexCur,'dex_max': dexMax,
-        'wil_cur': wilCur,'wil_max': wilMax,
-        'hp_cur':  hpCur,'hp_max':  hpMax,
-      }).select().single();
-      _characterId = ins['id'] as String;
-
-      await _prefillFromExample();
-      await _saveCharacter();
-      setState(() {});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fiche introuvable.')),
+      );
       return;
     }
-
-    _characterId = r['id'] as String;
-    setState(() {
-      nameCtrl.text       = (r['name'] ?? '') as String;
-      backgroundCtrl.text = (r['background'] ?? '') as String;
-
-      level = (r['level'] ?? 1) as int;
-      xp    = (r['xp'] ?? 0) as int;
-      levelCtrl.text = '$level';
-      xpCtrl.text = '$xp';
-
-      strMax = (r['str_max'] ?? 10) as int; strCur = (r['str_cur'] ?? 10) as int;
-      dexMax = (r['dex_max'] ?? 10) as int; dexCur = (r['dex_cur'] ?? 10) as int;
-      wilMax = (r['wil_max'] ?? 10) as int; wilCur = (r['wil_cur'] ?? 10) as int;
-      hpMax  = (r['hp_max']  ??  4) as int; hpCur  = (r['hp_cur']  ??  4) as int;
-    });
-
-    final id = _characterId;
-    if (id != null) {
-      final eq = await supa.from('character_items')
-          .select('slot,item_id,durability_used, items(name,image_url,durability_max)')
-          .eq('character_id', id);
-
-      for (final e in eq) {
-        final item = e['items'] as Map<String, dynamic>;
-        equipment[_fromSlotString(e['slot'] as String)] = EquippedItem(
-          id: e['item_id'] as String,
-          name: item['name'] as String,
-          imageUrl: item['image_url'] as String?,
-          durabilityMax: (item['durability_max'] as int?) ?? 3,
-          durabilityUsed: (e['durability_used'] as int?) ?? 0,
-        );
-      }
-      setState(() {});
-    }
+    _hydrateFromRow(r); // ← factorise ci-dessous
+    await _loadEquipmentFor(_characterId!);
+    return;
   }
+
+  // 2) sinon : charger la dernière fiche de ce joueur (s’il y en a)
+  final r = await supa.from('characters')
+      .select()
+      .eq('owner_id', uid)
+      .order('updated_at', ascending: false) // si tu as ce champ
+      .limit(1)
+      .maybeSingle();
+
+  if (r == null) {
+    // 3) aucune fiche → en créer une vierge
+    final ins = await supa.from('characters').insert({
+      'owner_id': uid,
+      'name': '',
+      'background': '',
+      'level': level,
+      'xp': xp,
+      'stats': { // si tu utilises le JSON "stats"
+        'str': {'max': strMax, 'cur': strCur},
+        'dex': {'max': dexMax, 'cur': dexCur},
+        'wil': {'max': wilMax, 'cur': wilCur},
+        'hp':  {'max': hpMax,  'cur': hpCur },
+      },
+      'slots': {}, // si ta colonne NOT NULL existe
+    }).select().single();
+
+    _characterId = ins['id'] as String;
+    await _prefillFromExample();
+    await _saveCharacter();
+    setState(() {});
+    return;
+  }
+
+  _hydrateFromRow(r);
+  await _loadEquipmentFor(_characterId!);
+}
+
+void _hydrateFromRow(Map<String,dynamic> r) {
+  _characterId = r['id'] as String;
+
+  // si tu es repassé en colonnes scalaires, adapte ici.
+  nameCtrl.text       = (r['name'] ?? '') as String;
+  backgroundCtrl.text = (r['background'] ?? '') as String;
+  level = (r['level'] ?? 1) as int;  levelCtrl.text = '$level';
+  xp    = (r['xp'] ?? 0) as int;     xpCtrl.text    = '$xp';
+
+  // JSON "stats" (adapte si tu n’utilises pas le JSON)
+  final stats = (r['stats'] ?? {}) as Map<String,dynamic>;
+  strMax = (stats['str']?['max'] ?? 10) as int;
+  strCur = (stats['str']?['cur'] ?? 10) as int;
+  dexMax = (stats['dex']?['max'] ?? 10) as int;
+  dexCur = (stats['dex']?['cur'] ?? 10) as int;
+  wilMax = (stats['wil']?['max'] ?? 10) as int;
+  wilCur = (stats['wil']?['cur'] ?? 10) as int;
+  hpMax  = (stats['hp'] ?['max'] ??  4) as int;
+  hpCur  = (stats['hp'] ?['cur'] ??  4) as int;
+
+  setState(() {});
+}
+
+Future<void> _loadEquipmentFor(String characterId) async {
+  final eq = await supa
+      .from('character_items')
+      .select(
+        'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense)',
+      )
+      .eq('character_id', characterId);
+
+  for (final e in eq) {
+    final item   = e['items'] as Map<String, dynamic>;
+    final slot   = _fromSlotString(e['slot'] as String);
+    final itemId = e['item_id'].toString();
+
+    equipment[slot] = EquippedItem(
+      id: itemId,
+      name: item['name'] as String,
+      imageUrl: item['image_url'] as String?,
+      durabilityMax: (item['durability_max'] as int?) ?? 3,
+      durabilityUsed: (e['durability_used'] as int?) ?? 0,
+      category: (item['category'] as String?) ?? 'OTHER',
+      damage: item['damage'] as String?,
+      defense: (item['defense'] is int)
+          ? item['defense'] as int
+          : int.tryParse('${item['defense'] ?? ''}'),
+    );
+  }
+  setState(() {});
+}
+
 
   bool _isLoading = false;
 
@@ -384,7 +563,7 @@ Future<String?> _ensureCharacterId() async {
     Future<Map<String, dynamic>?> _findFirst(List<String> patterns, SlotType slot) async {
       for (final p in patterns) {
         final rows = await supa.from('items')
-            .select('id,name,image_url,durability_max,compatible_slots')
+            .select('id,name,image_url,durability_max,compatible_slots,category,damage,defense')
             .ilike('name', p)
             .contains('compatible_slots', [slotTag(slot)])
             .limit(1);
@@ -395,13 +574,19 @@ Future<String?> _ensureCharacterId() async {
 
     void _equip(SlotType slot, Map<String, dynamic> r) {
       equipment[slot] = EquippedItem(
-        id: r['id'] as String,
+        id: r['id'].toString(),
         name: r['name'] as String,
         imageUrl: r['image_url'] as String?,
         durabilityMax: (r['durability_max'] as int?) ?? 3,
         durabilityUsed: 0,
+        category: (r['category'] as String?) ?? 'OTHER',
+        damage: r['damage'] as String?,
+        defense: (r['defense'] is int)
+            ? r['defense'] as int
+            : int.tryParse('${r['defense'] ?? ''}'),
       );
     }
+
 
     final sling = await _findFirst(const ['%fronde%', '%sling%'], SlotType.pawMain);
     if (sling != null) _equip(SlotType.pawMain, sling);
@@ -871,74 +1056,161 @@ Future<String?> _ensureCharacterId() async {
   }
 
   // ---------------- Slots & Pack ----------------
-  Widget _slotCard(SlotType slot, {double? height}) {
-    final it = equipment[slot];
-    return GestureDetector(
-      onTap: () => _pickItemForSlot(slot),
-      onLongPress: () => _unequip(slot),
-      child: Container(
-        height: height ?? 43,
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.75),
-          border: Border.all(color: Colors.black54, width: 1.3),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        padding: const EdgeInsets.all(8),
-        child: it == null
-            ? Center(child: Text(slotLabel(slot), style: const TextStyle(color: Colors.black87)))
-            : Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  if (it.imageUrl != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: Image.network(it.imageUrl!, width: 44, height: 44, fit: BoxFit.cover),
-                    )
-                  else
-                    const Icon(Icons.inventory_2_outlined, size: 36),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(it.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        const SizedBox(height: 6),
-                        _durabilityDotsForSlot(
-                          slot,
-                          max: it.durabilityMax,
-                          used: it.durabilityUsed,
-                        ),
-                      ],
+// ---------------- Slots & Pack ----------------
+Widget _slotCard(SlotType slot, {double? height}) {
+  final it = equipment[slot];
+
+  return GestureDetector(
+    onTap: () => _pickItemForSlot(slot),
+    onLongPress: () => _unequip(slot),
+    child: Container(
+      height: height ?? 120,
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.black54, width: 1.3),
+        borderRadius: BorderRadius.circular(10),
+        color: Colors.white.withOpacity(0.6),
+      ),
+      clipBehavior: Clip.antiAlias, // évite tout overflow
+      child: it == null
+          ? Center(
+              child: Text(
+                slotLabel(slot),
+                style: const TextStyle(color: Colors.black87),
+              ),
+            )
+          : Stack(
+              fit: StackFit.expand,
+              children: [
+                // --- image de fond ---
+                if (it.imageUrl != null)
+                  Image.network(it.imageUrl!, fit: BoxFit.cover)
+                else
+                  const Center(child: Icon(Icons.inventory_2_outlined, size: 42)),
+
+                // --- voile pour lisibilité (haut et bas)
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.35),
+                          Colors.transparent,
+                          Colors.black.withOpacity(0.45),
+                        ],
+                        stops: const [0.0, 0.55, 1.0],
+                      ),
                     ),
                   ),
-                ],
-              ),
-      ),
-    );
-  }
+                ),
 
-  Widget _durabilityDotsForSlot(
-    SlotType slot, {
-    required int max,
-    required int used,
-  }) {
-    final total = max.clamp(1, 6);
-    return Row(
-      children: List.generate(total, (i) {
-        final filled = i < used;
-        return GestureDetector(
-          onTap: () async {
-            final newUsed = (i + 1 == used) ? i : i + 1;
-            setState(() => equipment[slot]!.durabilityUsed = newUsed); // UI optimiste
-            await _updateDurability(slot, newUsed);                     // save immédiat
-          },
-          child: Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: Icon(filled ? Icons.circle : Icons.circle_outlined, size: 14),
-          ),
-        );
-      }),
-    );
+                // --- titre centré en haut ---
+                Positioned(
+                  left: 6,
+                  right: 6,
+                  top: 6,
+                  child: Text(
+                    it.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                      shadows: [Shadow(color: Colors.black54, blurRadius: 6)],
+                    ),
+                  ),
+                ),
+
+                // --- badge dégâts/défense en haut-droite ---
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: _itemBadgeFor(it),
+                ),
+
+                // --- points de durabilité centrés en bas ---
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 6,
+                  child: Center(
+                    child: _durabilityDotsForSlot(
+                      slot,
+                      max: it.durabilityMax,
+                      used: it.durabilityUsed,
+                      color: Colors.white,
+                      size: 16,
+                      spacing: 6,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    ),
+  );
+}
+
+Widget _itemBadgeFor(EquippedItem it) {
+  String? text;
+  if (it.category == 'WEAPON' && (it.damage?.isNotEmpty ?? false)) {
+    text = it.damage;           // ex: d6, d6/d8, d10…
+  } else if (it.category == 'ARMOR' && it.defense != null) {
+    text = '${it.defense} DEF';
   }
+  if (text == null) return const SizedBox.shrink();
+
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    decoration: BoxDecoration(
+      color: Colors.white.withOpacity(0.92),
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(color: Colors.black87, width: 1.2),
+    ),
+    child: Text(
+      text,
+      style: const TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+        color: Colors.black87,
+      ),
+    ),
+  );
+}
+
+
+ Widget _durabilityDotsForSlot(
+  SlotType slot, {
+  required int max,
+  required int used,
+  Color color = Colors.black87,
+  double size = 14,
+  double spacing = 4,
+}) {
+  final total = max.clamp(1, 6);
+  return Row(
+    mainAxisSize: MainAxisSize.min, // ← centrage serré
+    children: List.generate(total, (i) {
+      final filled = i < used;
+      return GestureDetector(
+        onTap: () async {
+          final newUsed = (i + 1 == used) ? i : i + 1;
+          setState(() => equipment[slot]!.durabilityUsed = newUsed); // UI optimiste
+          await _updateDurability(slot, newUsed);                     // save DB
+        },
+        child: Padding(
+          padding: EdgeInsets.only(right: i == total - 1 ? 0 : spacing),
+          child: Icon(
+            filled ? Icons.circle : Icons.circle_outlined,
+            size: size,
+            color: color,
+          ),
+        ),
+      );
+    }),
+  );
+}
+
 }
