@@ -17,7 +17,14 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
   static const bucket = 'items'; // bucket Supabase Storage (public conseillé)
 
   // Catégories autorisées (alignées avec la BDD)
-  static const categories = ['WEAPON', 'ARMOR', 'AMMO', 'LIGHT', 'RATION', 'OTHER'];
+  static const categories = [
+    'WEAPON',
+    'ARMOR',
+    'AMMO',
+    'LIGHT',
+    'RATION',
+    'OTHER',
+  ];
   // Slots compatibles
   static const slots = ['PAW_MAIN', 'PAW_OFF', 'BODY', 'PACK'];
 
@@ -81,9 +88,9 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
       final source = await _chooseSource(context);
       if (source == null) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Action annulée')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Action annulée')));
         }
         return null;
       }
@@ -97,9 +104,13 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
       if (x == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(source == ImageSource.camera
-                ? 'Aucune photo prise'
-                : 'Aucune image sélectionnée')),
+            SnackBar(
+              content: Text(
+                source == ImageSource.camera
+                    ? 'Aucune photo prise'
+                    : 'Aucune image sélectionnée',
+              ),
+            ),
           );
         }
         return null;
@@ -114,30 +125,29 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
       final uid = supa.auth.currentUser!.id;
       final path = '$uid/items_${DateTime.now().millisecondsSinceEpoch}.$ext';
 
-      await supa.storage.from(bucket).uploadBinary(
-        path,
-        Uint8List.fromList(bytes),
-        fileOptions: FileOptions(
-          upsert: true,
-          contentType: 'image/$ext',
-        ),
-      );
+      await supa.storage
+          .from(bucket)
+          .uploadBinary(
+            path,
+            Uint8List.fromList(bytes),
+            fileOptions: FileOptions(upsert: true, contentType: 'image/$ext'),
+          );
 
       // Bucket public → URL directe
       final url = supa.storage.from(bucket).getPublicUrl(path);
       return url;
     } on StorageException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Storage: ${e.message}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Storage: ${e.message}')));
       }
       return null;
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur upload: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Erreur upload: $e')));
       }
       return null;
     }
@@ -145,27 +155,38 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
 
   Future<void> _createOrEdit({Map<String, dynamic>? existing}) async {
     final nameCtrl = TextEditingController(text: existing?['name'] ?? '');
-    final duraCtrl = TextEditingController(text: (existing?['durability_max'] ?? 3).toString());
+    final duraCtrl = TextEditingController(
+      text: (existing?['durability_max'] ?? 3).toString(),
+    );
     String category = existing?['category'] ?? 'OTHER';
-    final selected = <String>{...(existing?['compatible_slots']?.cast<String>() ?? <String>[])};
+    final selected = <String>{
+      ...(existing?['compatible_slots']?.cast<String>() ?? <String>[]),
+    };
     String? imageUrl = existing?['image_url'];
+    bool twoHanded = (existing?['two_handed'] as bool?) ?? false;
 
     // Champs spécifiques
     String? damage = existing?['damage'] as String?;
     int? defense;
-final raw = existing?['defense'];
+    final raw = existing?['defense'];
 
-if (raw is int) {
-  defense = raw;
-} else if (raw != null) {
-  defense = int.tryParse(raw.toString());
-} else {
-  defense = null;
-}
+    if (raw is int) {
+      defense = raw;
+    } else if (raw != null) {
+      defense = int.tryParse(raw.toString());
+    } else {
+      defense = null;
+    }
 
     // Contrôleurs pour “Personnalisé…”
-    final dmgCustomCtrl = TextEditingController(text: (damage != null && !weaponPresets.contains(damage)) ? damage : '');
-    final defCustomCtrl = TextEditingController(text: (defense != null && ![1,2,3,4].contains(defense)) ? '$defense' : '');
+    final dmgCustomCtrl = TextEditingController(
+      text: (damage != null && !weaponPresets.contains(damage)) ? damage : '',
+    );
+    final defCustomCtrl = TextEditingController(
+      text: (defense != null && ![1, 2, 3, 4].contains(defense))
+          ? '$defense'
+          : '',
+    );
 
     // Valeur de preset sélectionnée (ou “Personnalisé…”)
     String weaponPresetValue = damage == null
@@ -174,7 +195,9 @@ if (raw is int) {
 
     String armorPresetValue = defense == null
         ? armorPresets.first
-        : ( [1,2,3,4].contains(defense) ? '${defense!} DEF' : 'Personnalisé…' );
+        : ([1, 2, 3, 4].contains(defense)
+              ? '${defense!} DEF'
+              : 'Personnalisé…');
 
     await showModalBottomSheet(
       isScrollControlled: true,
@@ -182,7 +205,9 @@ if (raw is int) {
       builder: (sheetCtx) {
         return Padding(
           padding: EdgeInsets.only(
-            left: 16, right: 16, top: 16,
+            left: 16,
+            right: 16,
+            top: 16,
             bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 16,
           ),
           child: StatefulBuilder(
@@ -190,37 +215,61 @@ if (raw is int) {
               // Widgets conditionnels
               Widget _weaponSection() {
                 if (category != 'WEAPON') return const SizedBox.shrink();
+
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: 12),
-                    Text('Dégâts (arme)', style: Theme.of(ctx).textTheme.titleSmall),
+                    Text(
+                      'Dégâts (arme)',
+                      style: Theme.of(ctx).textTheme.titleSmall,
+                    ),
                     const SizedBox(height: 6),
+
                     DropdownButtonFormField<String>(
                       value: weaponPresetValue,
                       items: weaponPresets
-                          .map((d) => DropdownMenuItem(value: d, child: Text(d)))
+                          .map(
+                            (d) => DropdownMenuItem(value: d, child: Text(d)),
+                          )
                           .toList(),
                       onChanged: (v) => setS(() {
-                        weaponPresetValue = v!;
+                        if (v == null) return;
+                        weaponPresetValue = v;
                         if (v == 'Personnalisé…') {
-                          damage = dmgCustomCtrl.text.trim().isEmpty ? null : dmgCustomCtrl.text.trim();
+                          // si le champ est vide → damage = null
+                          final t = dmgCustomCtrl.text.trim();
+                          damage = t.isEmpty ? null : t;
                         } else {
-                          damage = v;
+                          damage = v; // un des presets
                         }
                       }),
                       decoration: const InputDecoration(labelText: 'Preset'),
                     ),
+
                     if (weaponPresetValue == 'Personnalisé…') ...[
                       const SizedBox(height: 8),
                       TextField(
                         controller: dmgCustomCtrl,
                         decoration: const InputDecoration(
-                          labelText: 'Dégâts personnalisés (ex: 2d6, d6+1, d6/d10...)',
+                          labelText:
+                              'Dégâts personnalisés (ex: 2d6, d6+1, d6/d10...)',
                         ),
-                        onChanged: (v) => setS(()=> damage = v.trim().isEmpty ? null : v.trim()),
+                        onChanged: (v) => setS(() {
+                          final t = v.trim();
+                          damage = t.isEmpty ? null : t;
+                        }),
                       ),
                     ],
+
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      value: twoHanded,
+                      onChanged: (v) => setS(() => twoHanded = v ?? false),
+                      title: const Text('Arme à deux mains'),
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
                   ],
                 );
               }
@@ -231,19 +280,26 @@ if (raw is int) {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: 12),
-                    Text('Défense (armure)', style: Theme.of(ctx).textTheme.titleSmall),
+                    Text(
+                      'Défense (armure)',
+                      style: Theme.of(ctx).textTheme.titleSmall,
+                    ),
                     const SizedBox(height: 6),
                     DropdownButtonFormField<String>(
                       value: armorPresetValue,
                       items: armorPresets
-                          .map((d) => DropdownMenuItem(value: d, child: Text(d)))
+                          .map(
+                            (d) => DropdownMenuItem(value: d, child: Text(d)),
+                          )
                           .toList(),
                       onChanged: (v) => setS(() {
                         armorPresetValue = v!;
                         if (v == 'Personnalisé…') {
                           defense = int.tryParse(defCustomCtrl.text.trim());
                         } else {
-                          defense = int.parse(v.split(' ').first); // "1 DEF" -> 1
+                          defense = int.parse(
+                            v.split(' ').first,
+                          ); // "1 DEF" -> 1
                         }
                       }),
                       decoration: const InputDecoration(labelText: 'Preset'),
@@ -253,8 +309,11 @@ if (raw is int) {
                       TextField(
                         controller: defCustomCtrl,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'DEF personnalisée (entier)'),
-                        onChanged: (v) => setS(()=> defense = int.tryParse(v.trim())),
+                        decoration: const InputDecoration(
+                          labelText: 'DEF personnalisée (entier)',
+                        ),
+                        onChanged: (v) =>
+                            setS(() => defense = int.tryParse(v.trim())),
                       ),
                     ],
                   ],
@@ -265,8 +324,10 @@ if (raw is int) {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(existing == null ? 'Nouvel item' : 'Modifier l’item',
-                        style: Theme.of(ctx).textTheme.titleLarge),
+                    Text(
+                      existing == null ? 'Nouvel item' : 'Modifier l’item',
+                      style: Theme.of(ctx).textTheme.titleLarge,
+                    ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: nameCtrl,
@@ -277,18 +338,26 @@ if (raw is int) {
                     TextField(
                       controller: duraCtrl,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(labelText: 'Durabilité max (ex: 3)'),
+                      decoration: const InputDecoration(
+                        labelText: 'Durabilité max (ex: 3)',
+                      ),
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
                       value: category,
-                      items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                      items: categories
+                          .map(
+                            (c) => DropdownMenuItem(value: c, child: Text(c)),
+                          )
+                          .toList(),
                       onChanged: (v) => setS(() {
                         category = v!;
-                        // remise à zéro propre quand on change de catégorie
+
+                        // Remises à zéro propres
                         if (category != 'WEAPON') {
                           weaponPresetValue = weaponPresets.first;
                           damage = null;
+                          twoHanded = false;          // ← important
                           dmgCustomCtrl.clear();
                         }
                         if (category != 'ARMOR') {
@@ -297,6 +366,7 @@ if (raw is int) {
                           defCustomCtrl.clear();
                         }
                       }),
+
                       decoration: const InputDecoration(labelText: 'Catégorie'),
                     ),
                     const SizedBox(height: 8),
@@ -334,7 +404,9 @@ if (raw is int) {
                               setS(() => imageUrl = url);
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Image importée ✔')),
+                                  const SnackBar(
+                                    content: Text('Image importée ✔'),
+                                  ),
                                 );
                               }
                             }
@@ -355,11 +427,35 @@ if (raw is int) {
                     const SizedBox(height: 16),
                     FilledButton(
                       onPressed: () async {
+                        // --- Validations simples ---
+                        if (category == 'WEAPON') {
+                          final hasDamage = (damage != null && damage!.trim().isNotEmpty)
+                              || dmgCustomCtrl.text.trim().isNotEmpty;
+                          if (!hasDamage) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(content: Text('Pour une arme, indique des dégâts.')),
+                            );
+                            return;
+                          }
+                        }
+                        if (category == 'ARMOR') {
+                          final defVal = defense ?? int.tryParse(defCustomCtrl.text.trim());
+                          if (defVal == null) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(content: Text('Pour une armure, indique la DEF.')),
+                            );
+                            return;
+                          }
+                        }
+
                         final name = nameCtrl.text.trim();
-                        final durability = int.tryParse(duraCtrl.text.trim()) ?? 3;
+                        final durability =
+                            int.tryParse(duraCtrl.text.trim()) ?? 3;
                         if (name.isEmpty) {
                           ScaffoldMessenger.of(ctx).showSnackBar(
-                            const SnackBar(content: Text('Le nom est obligatoire')),
+                            const SnackBar(
+                              content: Text('Le nom est obligatoire'),
+                            ),
                           );
                           return;
                         }
@@ -370,13 +466,24 @@ if (raw is int) {
                           'category': category,
                           'created_by': supa.auth.currentUser!.id,
                           // On nettoie selon la catégorie
-                          'damage': category == 'WEAPON'? (() {if (damage != null && damage!.isNotEmpty) return damage; final txt = dmgCustomCtrl.text.trim();
-                            return txt.isNotEmpty ? txt : null; }())  : null,
-                          'defense': category == 'ARMOR' ? (defense ?? int.tryParse(defCustomCtrl.text.trim())) : null,
+                          'damage': category == 'WEAPON'
+                              ? (() {
+                                  if (damage != null && damage!.isNotEmpty)
+                                    return damage;
+                                  final txt = dmgCustomCtrl.text.trim();
+                                  return txt.isNotEmpty ? txt : null;
+                                }())
+                              : null,
+                          'defense': category == 'ARMOR'
+                              ? (defense ??
+                                    int.tryParse(defCustomCtrl.text.trim()))
+                              : null,
                         };
                         if (imageUrl != null) {
                           payload['image_url'] = imageUrl;
                         }
+
+                        payload['two_handed'] = (category == 'WEAPON') ? twoHanded : null;
 
                         try {
                           if (existing == null) {
@@ -387,23 +494,43 @@ if (raw is int) {
                             final oldImage = existing['image_url'] as String?;
                             final newImage = imageUrl;
 
-                            await supa.from('items').update(payload).eq('id', existing['id']).select();
+                            await supa
+                                .from('items')
+                                .update(payload)
+                                .eq('id', existing['id'])
+                                .select();
 
                             // Si l'image a changé : supprime l'ancienne
-                            if (oldImage != null && newImage != null && oldImage != newImage) {
+                            if (oldImage != null &&
+                                newImage != null &&
+                                oldImage != newImage) {
                               try {
-                                if (oldImage.contains('/object/public/items/')) {
-                                  final path = oldImage.split('/object/public/items/').last;
-                                  await supa.storage.from(bucket).remove([path]);
+                                if (oldImage.contains(
+                                  '/object/public/items/',
+                                )) {
+                                  final path = oldImage
+                                      .split('/object/public/items/')
+                                      .last;
+                                  await supa.storage.from(bucket).remove([
+                                    path,
+                                  ]);
                                 }
-                              } catch (_) {/* non bloquant */}
+                              } catch (_) {
+                                /* non bloquant */
+                              }
                             }
                           }
                           if (context.mounted) Navigator.pop(sheetCtx);
                           await _refresh();
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(existing == null ? 'Item créé' : 'Item mis à jour')),
+                              SnackBar(
+                                content: Text(
+                                  existing == null
+                                      ? 'Item créé'
+                                      : 'Item mis à jour',
+                                ),
+                              ),
                             );
                           }
                         } on PostgrestException catch (e) {
@@ -416,10 +543,13 @@ if (raw is int) {
                       child: Text(existing == null ? 'Créer' : 'Enregistrer'),
                     ),
                     const SizedBox(height: 8),
-                    if (existing != null && existing['created_by'] == supa.auth.currentUser!.id)
+                    if (existing != null &&
+                        existing['created_by'] == supa.auth.currentUser!.id)
                       TextButton.icon(
                         icon: const Icon(Icons.delete_outline),
-                        style: TextButton.styleFrom(foregroundColor: Colors.red),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.red,
+                        ),
                         onPressed: () async {
                           final ok = await showDialog<bool>(
                             context: context,
@@ -440,15 +570,23 @@ if (raw is int) {
                           );
                           if (ok != true) return;
 
-                          await supa.from('items').delete().eq('id', existing['id']);
+                          await supa
+                              .from('items')
+                              .delete()
+                              .eq('id', existing['id']);
 
                           try {
                             final url = existing['image_url'] as String?;
-                            if (url != null && url.contains('/object/public/items/')) {
-                              final path = url.split('/object/public/items/').last;
+                            if (url != null &&
+                                url.contains('/object/public/items/')) {
+                              final path = url
+                                  .split('/object/public/items/')
+                                  .last;
                               await supa.storage.from(bucket).remove([path]);
                             }
-                          } catch (_) {/* non bloquant */}
+                          } catch (_) {
+                            /* non bloquant */
+                          }
 
                           if (context.mounted) Navigator.pop(sheetCtx);
                           await _refresh();
@@ -460,7 +598,8 @@ if (raw is int) {
                         },
                         label: const Text('Supprimer'),
                       ),
-                    if (existing != null && existing['created_by'] != supa.auth.currentUser!.id)
+                    if (existing != null &&
+                        existing['created_by'] != supa.auth.currentUser!.id)
                       const Padding(
                         padding: EdgeInsets.only(top: 8),
                         child: Text(
@@ -496,48 +635,58 @@ if (raw is int) {
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : items.isEmpty
-              ? const Center(child: Text('Aucun item. Ajoute ton premier !'))
-              : ListView.separated(
-                  itemCount: items.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (ctx, i) {
-                    final it = items[i] as Map<String, dynamic>;
-                    final isOwner = (it['created_by'] == uid);
+          ? const Center(child: Text('Aucun item. Ajoute ton premier !'))
+          : ListView.separated(
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (ctx, i) {
+                final it = items[i] as Map<String, dynamic>;
+                final isOwner = (it['created_by'] == uid);
+                final isWeapon = it['category'] == 'WEAPON';
+                final isTwo = (it['two_handed'] as bool?) == true;
 
-                    // Texte dégâts/défense pour l’aperçu
-                    String extra = '';
-                    if (it['category'] == 'WEAPON' && (it['damage'] != null) && '${it['damage']}'.isNotEmpty) {
-                      extra = ' • Dégâts: ${it['damage']}';
-                    } else if (it['category'] == 'ARMOR' && it['defense'] != null) {
-                      extra = ' • DEF: ${it['defense']}';
-                    }
+                // Texte dégâts/défense pour l’aperçu
+                String extra = '';
+                if (isWeapon && (it['damage'] != null) && '${it['damage']}'.isNotEmpty) {
+                  extra = ' • Dégâts: ${it['damage']}';
+                } else if (it['category'] == 'ARMOR' && it['defense'] != null) {
+                  extra = ' • DEF: ${it['defense']}';
+                }
+                final twoTxt = isWeapon && isTwo ? ' • (2 mains)' : '';
 
-                    return ListTile(
-                      leading: (it['image_url'] != null)
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: Image.network(
-                                it['image_url'],
-                                width: 44,
-                                height: 44,
-                                fit: BoxFit.cover,
-                              ),
-                            )
-                          : const Icon(Icons.inventory_2_outlined),
-                      title: Text(it['name'] ?? ''),
-                      subtitle: Text(
-                        'Cat: ${it['category']} • Durabilité: ${it['durability_max']}'
-                        ' • Slots: ${(it['compatible_slots'] as List?)?.join(", ") ?? "-"}$extra',
-                      ),
-                      trailing: isOwner ? const Icon(Icons.edit) : const Icon(Icons.lock_outline),
-                      onTap: () => isOwner
-                          ? _createOrEdit(existing: it)
-                          : ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Tu ne peux modifier que tes propres items.')),
+                return ListTile(
+                  leading: (it['image_url'] != null)
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Image.network(
+                            it['image_url'],
+                            width: 44,
+                            height: 44,
+                            fit: BoxFit.cover,
+                          ),
+                        )
+                      : const Icon(Icons.inventory_2_outlined),
+                  title: Text(it['name'] ?? ''),
+                  subtitle: Text(
+                      'Cat: ${it['category']} • Durabilité: ${it['durability_max']}'
+                      ' • Slots: ${(it['compatible_slots'] as List?)?.join(", ") ?? "-"}'
+                      '$extra$twoTxt',
+                    ),
+                  trailing: isOwner
+                      ? const Icon(Icons.edit)
+                      : const Icon(Icons.lock_outline),
+                  onTap: () => isOwner
+                      ? _createOrEdit(existing: it)
+                      : ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Tu ne peux modifier que tes propres items.',
                             ),
-                    );
-                  },
-                ),
+                          ),
+                        ),
+                );
+              },
+            ),
     );
   }
 }

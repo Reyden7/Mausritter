@@ -42,7 +42,9 @@ class EquippedItem {
 
   final String category;     // 'WEAPON', 'ARMOR', etc.
   final String? damage;      // pour WEAPON
-  final int? defense;        // pour ARMOR
+  final int? defense;   
+  
+  final bool two_handed;     // pour ARMOR
 
   EquippedItem({
     required this.id,
@@ -53,8 +55,15 @@ class EquippedItem {
     required this.category,
     this.damage,
     this.defense,
+    this.two_handed = false,
   });
 }
+
+SlotType _otherPaw(SlotType s) =>
+  s == SlotType.pawMain ? SlotType.pawOff : SlotType.pawMain;
+
+bool _isPaw(SlotType s) => s == SlotType.pawMain || s == SlotType.pawOff;
+
 
 // petit helper pour normaliser l'id en String
 String? _asIdString(dynamic v) {
@@ -252,11 +261,12 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
   // ------- Sélecteur d’items filtrés par slot + déséquipement -------
 Future<void> _pickItemForSlot(SlotType slot) async {
   final tag = slotTag(slot);
+
   try {
     final rows = await supa
         .from('items')
         .select(
-          'id,name,image_url,durability_max,compatible_slots,category,damage,defense',
+          'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed',
         )
         .contains('compatible_slots', [tag])
         .order('name');
@@ -274,8 +284,10 @@ Future<void> _pickItemForSlot(SlotType slot) async {
             children: [
               Padding(
                 padding: const EdgeInsets.all(12),
-                child: Text('Choisir un item – ${slotLabel(slot)}',
-                    style: Theme.of(ctx).textTheme.titleMedium),
+                child: Text(
+                  'Choisir un item – ${slotLabel(slot)}',
+                  style: Theme.of(ctx).textTheme.titleMedium,
+                ),
               ),
               const Divider(height: 1),
               Expanded(
@@ -284,18 +296,24 @@ Future<void> _pickItemForSlot(SlotType slot) async {
                   itemCount: rows.length,
                   itemBuilder: (_, i) {
                     final r = rows[i] as Map<String, dynamic>;
+                    final twoH = (r['two_handed'] as bool?) ?? false;
                     return ListTile(
                       leading: (r['image_url'] != null)
                           ? ClipRRect(
                               borderRadius: BorderRadius.circular(6),
                               child: Image.network(
                                 r['image_url'],
-                                width: 42, height: 42, fit: BoxFit.cover,
+                                width: 42,
+                                height: 42,
+                                fit: BoxFit.cover,
                               ),
                             )
                           : const Icon(Icons.inventory_2_outlined),
                       title: Text(r['name'] ?? ''),
-                      subtitle: Text('Durabilité ${r['durability_max'] ?? 3}'),
+                      subtitle: Text(
+                        'Durabilité ${r['durability_max'] ?? 3}'
+                        '${twoH ? ' • 2 mains' : ''}',
+                      ),
                       onTap: () => Navigator.pop(ctx, r),
                     );
                   },
@@ -309,22 +327,58 @@ Future<void> _pickItemForSlot(SlotType slot) async {
 
     if (chosen == null) return;
 
-    setState(() {
-      equipment[slot] = EquippedItem(
-         id: chosen['id'].toString(),
-        name: chosen['name'] ?? 'Item',
-        imageUrl: chosen['image_url'] as String?,
-        durabilityMax: (chosen['durability_max'] as int?) ?? 3,
-        durabilityUsed: 0,
-        category: (chosen['category'] as String?) ?? 'OTHER',
-        damage: chosen['damage'] as String?,
-        defense: (chosen['defense'] is int)
-            ? chosen['defense'] as int
-            : int.tryParse('${chosen['defense'] ?? ''}'),
-      );
-    });
+    final equipped = EquippedItem(
+      id: chosen['id'].toString(),
+      name: chosen['name'] ?? 'Item',
+      imageUrl: chosen['image_url'] as String?,
+      durabilityMax: (chosen['durability_max'] as int?) ?? 3,
+      durabilityUsed: 0,
+      category: (chosen['category'] as String?) ?? 'OTHER',
+      damage: chosen['damage'] as String?,
+      defense: (chosen['defense'] is int)
+          ? chosen['defense'] as int
+          : int.tryParse('${chosen['defense'] ?? ''}'),
+      two_handed: (chosen['two_handed'] as bool?) ?? false,
+    );
+
+    // --- règles 2 mains sur les pattes ---
+    if (_isPaw(slot)) {
+      final other = _otherPaw(slot);
+
+      // Si autre patte a une arme 2M → on la retire d’abord
+      if (equipment[other]?.two_handed == true) {
+        setState(() {
+          equipment[other] = null;
+        });
+      }
+
+      if (equipped.two_handed) {
+        // occupe les deux slots de patte (même instance pour synchro durabilité)
+        setState(() {
+          equipment[slot] = equipped;
+          equipment[other] = equipped;
+        });
+      } else {
+        // arme 1 main → ne touche que le slot ciblé
+        setState(() {
+          equipment[slot] = equipped;
+        });
+      }
+    } else {
+      // slots hors pattes : comportement inchangé
+      setState(() {
+        equipment[slot] = equipped;
+      });
+    }
+
     await _saveCharacter();
-    await _updateDurability(slot, 0);
+    // sauvegarde rapide de la durabilité pour les deux pattes si 2M
+    if (_isPaw(slot) && equipment[slot]?.two_handed == true) {
+      await _updateDurability(slot, 0);
+      await _updateDurability(_otherPaw(slot), 0);
+    } else {
+      await _updateDurability(slot, 0);
+    }
   } catch (e) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -334,10 +388,22 @@ Future<void> _pickItemForSlot(SlotType slot) async {
 }
 
 
+
   void _unequip(SlotType slot) {
+  final it = equipment[slot];
+  if (it != null && _isPaw(slot) && it.two_handed) {
+    // libère les deux pattes
+    final other = _otherPaw(slot);
+    setState(() {
+      equipment[slot] = null;
+      equipment[other] = null;
+    });
+  } else {
     setState(() => equipment[slot] = null);
-    _saveCharacter();
   }
+  _saveCharacter();
+}
+
 
   // ----------------- Chargement / Sauvegarde -----------------
   Future<void> _loadCharacter() async {
@@ -424,18 +490,23 @@ Future<void> _loadEquipmentFor(String characterId) async {
   final eq = await supa
       .from('character_items')
       .select(
-        'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense)',
+        'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense,two_handed)',
       )
       .eq('character_id', characterId);
 
+  // on vide d’abord (au cas où)
+  for (final k in equipment.keys.toList()) {
+    equipment[k] = null;
+  }
+
   for (final e in eq) {
-    final item   = e['items'] as Map<String, dynamic>;
-    final slot   = _fromSlotString(e['slot'] as String);
+    final item = e['items'] as Map<String, dynamic>;
+    final slot = _fromSlotString(e['slot'] as String);
     final itemId = e['item_id'].toString();
 
-    equipment[slot] = EquippedItem(
+    final equipped = EquippedItem(
       id: itemId,
-      name: item['name'] as String,
+      name: (item['name'] ?? '') as String,
       imageUrl: item['image_url'] as String?,
       durabilityMax: (item['durability_max'] as int?) ?? 3,
       durabilityUsed: (e['durability_used'] as int?) ?? 0,
@@ -444,10 +515,20 @@ Future<void> _loadEquipmentFor(String characterId) async {
       defense: (item['defense'] is int)
           ? item['defense'] as int
           : int.tryParse('${item['defense'] ?? ''}'),
+      two_handed: (item['two_handed'] as bool?) ?? false,
     );
+
+    equipment[slot] = equipped;
+
+    // si c’est une arme 2M placée dans une patte → mirror sur l’autre patte
+    if (_isPaw(slot) && equipped.two_handed) {
+      equipment[_otherPaw(slot)] = equipped; // même instance → durabilité synchro
+    }
   }
+
   setState(() {});
 }
+
 
 
   bool _isLoading = false;
@@ -605,25 +686,41 @@ Future<String?> _ensureCharacterId() async {
   }
 
   Future<void> _updateDurability(SlotType slot, int newUsed) async {
-    final id = _characterId;
-    final it = equipment[slot];
-    if (id == null || it == null) return;
+  final id = _characterId;
+  final it = equipment[slot];
+  if (id == null || it == null) return;
 
-    final slotDb = _slotToDb(slot);
-    try {
+  final slotDb = _slotToDb(slot);
+  try {
+    // met à jour l’instance (utile si miroir partage la même instance)
+    it.durabilityUsed = newUsed;
+
+    // upsert du slot courant
+    await supa.from('character_items').upsert({
+      'character_id': id,
+      'slot': slotDb,
+      'item_id': it.id,
+      'durability_used': newUsed,
+    }, onConflict: 'character_id,slot');
+
+    // si c’est une arme 2M sur une patte → upsert aussi l’autre patte
+    if (_isPaw(slot) && it.two_handed) {
+      final other = _otherPaw(slot);
       await supa.from('character_items').upsert({
         'character_id': id,
-        'slot': _slotToDb(slot),
+        'slot': _slotToDb(other),
         'item_id': it.id,
         'durability_used': newUsed,
       }, onConflict: 'character_id,slot');
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Échec sauvegarde durabilité: $e')),
-      );
     }
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Échec sauvegarde durabilité: $e')),
+    );
   }
+}
+
 
   // ----------------- Helpers mapping slots -----------------
   SlotType _fromSlotString(String s) {
@@ -1156,29 +1253,47 @@ Widget _slotCard(SlotType slot, {double? height}) {
 Widget _itemBadgeFor(EquippedItem it) {
   String? text;
   if (it.category == 'WEAPON' && (it.damage?.isNotEmpty ?? false)) {
-    text = it.damage;           // ex: d6, d6/d8, d10…
+    text = it.damage; // ex: d6, d6/d8, d10…
   } else if (it.category == 'ARMOR' && it.defense != null) {
     text = '${it.defense} DEF';
   }
-  if (text == null) return const SizedBox.shrink();
+  if (text == null && !it.two_handed) return const SizedBox.shrink();
 
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-    decoration: BoxDecoration(
-      color: Colors.white.withOpacity(0.92),
-      borderRadius: BorderRadius.circular(6),
-      border: Border.all(color: Colors.black87, width: 1.2),
-    ),
-    child: Text(
-      text,
-      style: const TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w700,
-        color: Colors.black87,
-      ),
-    ),
+  return Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (text != null)
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.92),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.black87, width: 1.2),
+          ),
+          child: Text(
+            text,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+          ),
+        ),
+      if (it.two_handed) ...[
+        const SizedBox(width: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.92),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.black87, width: 1.2),
+          ),
+          child: const Text(
+            '2 mains',
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    ],
   );
 }
+
 
 
  Widget _durabilityDotsForSlot(
