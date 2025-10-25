@@ -34,7 +34,7 @@ String slotTag(SlotType s) {
 
 /// Modèle simple d’item équipé côté UI
 class EquippedItem {
-  final int id;
+  final String id;
   final String name;
   final String? imageUrl;
   final int durabilityMax;
@@ -48,6 +48,13 @@ class EquippedItem {
   });
 }
 
+// petit helper pour normaliser l'id en String
+String? _asIdString(dynamic v) {
+  if (v == null) return null;
+  if (v is String) return v;
+  if (v is int || v is num) return v.toString();
+  return null;
+}
 class PlayerSheetPage extends StatefulWidget {
   const PlayerSheetPage({super.key});
   @override
@@ -114,6 +121,8 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
     super.dispose();
   }
 
+  
+
   // ------- Sélecteur d’items filtrés par slot + déséquipement -------
   Future<void> _pickItemForSlot(SlotType slot) async {
     final tag = slotTag(slot);
@@ -174,7 +183,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
 
       setState(() {
         equipment[slot] = EquippedItem(
-          id: chosen['id'] as int,
+          id: chosen['id'] as String,
           name: chosen['name'] ?? 'Item',
           imageUrl: chosen['image_url'] as String?,
           durabilityMax: (chosen['durability_max'] as int?) ?? 3,
@@ -244,14 +253,14 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
 
     final id = _characterId;
     if (id != null) {
-      final eq = await supa.from('character_equipment')
+      final eq = await supa.from('character_items')
           .select('slot,item_id,durability_used, items(name,image_url,durability_max)')
           .eq('character_id', id);
 
       for (final e in eq) {
         final item = e['items'] as Map<String, dynamic>;
         equipment[_fromSlotString(e['slot'] as String)] = EquippedItem(
-          id: e['item_id'] as int,
+          id: e['item_id'] as String,
           name: item['name'] as String,
           imageUrl: item['image_url'] as String?,
           durabilityMax: (item['durability_max'] as int?) ?? 3,
@@ -262,14 +271,69 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
     }
   }
 
-  Future<void> _saveCharacter() async {
+  bool _isLoading = false;
+
+Future<String?> _ensureCharacterId() async {
+  if (_characterId != null) return _characterId;
+  final uid = supa.auth.currentUser?.id;
+  if (uid == null) return null;
+
+  _isLoading = true;
+  setState(() {});
+
+  try {
+    final r = await supa.from('characters')
+        .select()
+        .eq('owner_id', uid)
+        .maybeSingle();
+
+    if (r != null) {
+      _characterId = r['id'] as String;
+      return _characterId;
+    }
+
+    final ins = await supa.from('characters').insert({
+      'owner_id': uid,
+      'name': '',
+      'background': '',
+      'level': level,
+      'xp': xp,
+      'str_cur': strCur, 'str_max': strMax,
+      'dex_cur': dexCur,'dex_max': dexMax,
+      'wil_cur': wilCur,'wil_max': wilMax,
+      'hp_cur':  hpCur,'hp_max':  hpMax,
+    }).select().single();
+
+    _characterId = ins['id'] as String;
+    return _characterId;
+  } finally {
+    _isLoading = false;
+    if (mounted) setState(() {});
+  }
+}
+
+  Future<void> _saveCharacter({bool force = false, bool showFeedback = false}) async {
+    if (!mounted) return;
+
+    _saveTimer?.cancel();
     final now = DateTime.now();
-    if (now.difference(_lastSave) < const Duration(milliseconds: 400)) return;
+    if (!force && now.difference(_lastSave) < const Duration(milliseconds: 400)) {
+      return;
+    }
     _lastSave = now;
 
-    final id = _characterId;
-    if (id == null) return;
+    // 🔒 assure l’existence du perso
+    final id = await _ensureCharacterId();
+    if (id == null) {
+      if (showFeedback) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Impossible d’identifier l’utilisateur.')),
+        );
+      }
+      return;
+    }
 
+  try {
     level = int.tryParse(levelCtrl.text.trim()) ?? level;
     xp    = int.tryParse(xpCtrl.text.trim()) ?? xp;
 
@@ -288,11 +352,11 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
       final slotDb = _slotToDb(entry.key);
       final it = entry.value;
       if (it == null) {
-        await supa.from('character_equipment')
+        await supa.from('character_items')
             .delete()
             .match({'character_id': id, 'slot': slotDb});
       } else {
-        await supa.from('character_equipment').upsert({
+        await supa.from('character_items').upsert({
           'character_id': id,
           'slot': slotDb,
           'item_id': it.id,
@@ -300,7 +364,20 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
         }, onConflict: 'character_id,slot');
       }
     }
+
+    if (showFeedback) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fiche enregistrée ✅')),
+      );
+    }
+  } catch (e) {
+    if (showFeedback) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur à l’enregistrement : $e')),
+      );
+    }
   }
+}
 
   // ----------------- Pré-remplissage façon photo -----------------
   Future<void> _prefillFromExample() async {
@@ -318,7 +395,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
 
     void _equip(SlotType slot, Map<String, dynamic> r) {
       equipment[slot] = EquippedItem(
-        id: r['id'] as int,
+        id: r['id'] as String,
         name: r['name'] as String,
         imageUrl: r['image_url'] as String?,
         durabilityMax: (r['durability_max'] as int?) ?? 3,
@@ -349,9 +426,9 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
 
     final slotDb = _slotToDb(slot);
     try {
-      await supa.from('character_equipment').upsert({
+      await supa.from('character_items').upsert({
         'character_id': id,
-        'slot': slotDb,
+        'slot': _slotToDb(slot),
         'item_id': it.id,
         'durability_used': newUsed,
       }, onConflict: 'character_id,slot');
@@ -402,7 +479,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
     final ink = const Color(0xFF2C2A29);
 
     const double designW = 390;
-    const double designH = 600;
+    const double designH = 650;
 
     return Theme(
       data: Theme.of(context).copyWith(
@@ -420,10 +497,11 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
           actions: [
             IconButton(
               tooltip: 'Enregistrer',
-              onPressed: _saveCharacter,
+              onPressed: (_isLoading) ? null : () => _saveCharacter(force: true, showFeedback: true),
               icon: const Icon(Icons.save),
             ),
           ],
+
         ),
         body: SafeArea(
           child: LayoutBuilder(
