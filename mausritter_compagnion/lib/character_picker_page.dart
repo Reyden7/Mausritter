@@ -47,10 +47,10 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
       'background': '',
       'level': 1,
       'xp': 0,
-      'str_max': 10, 'str_cur': 10,
-      'dex_max': 10, 'dex_cur': 10,
-      'wil_max': 10, 'wil_cur': 10,
-      'hp_max':  4,  'hp_cur':  4,
+      'str_max': 0, 'str_cur': 0,
+      'dex_max': 0, 'dex_cur': 0,
+      'wil_max': 0, 'wil_cur': 0,
+      'hp_max':  0,  'hp_cur':  0,
       // Si tu es passé en colonnes JSONB (stats/slots), construis les objets par défaut ici.
       // 'stats': {'str':{'max':10,'cur':10}, ...},
       // 'slots': {...},
@@ -103,7 +103,15 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
                   itemBuilder: (_, i) {
                     final c = chars[i];
                     return ListTile(
-                      leading: const Icon(Icons.pets),
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.asset(
+                          'assets/icons/icon_souris.png',
+                          width: 42,
+                          height: 42,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
                       title: Text(c['name'] as String? ?? 'Sans nom'),
                       subtitle: Text((c['id'] as String).substring(0, 8)),
                       onTap: () {

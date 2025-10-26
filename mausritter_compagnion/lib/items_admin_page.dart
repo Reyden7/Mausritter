@@ -164,6 +164,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
     };
     String? imageUrl = existing?['image_url'];
     bool twoHanded = (existing?['two_handed'] as bool?) ?? false;
+    bool twoBody   = (existing?['two_body']   as bool?) ?? false;
 
     // Champs spécifiques
     String? damage = existing?['damage'] as String?;
@@ -301,8 +302,18 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                             v.split(' ').first,
                           ); // "1 DEF" -> 1
                         }
+                        
                       }),
+                      
                       decoration: const InputDecoration(labelText: 'Preset'),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      value: twoBody,
+                      onChanged: (v) => setS(() => twoBody = v ?? false),
+                      title: const Text('Armure qui occupe les 2 cases du corps'),
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
                     ),
                     if (armorPresetValue == 'Personnalisé…') ...[
                       const SizedBox(height: 8),
@@ -337,6 +348,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     const SizedBox(height: 8),
                     TextField(
                       controller: duraCtrl,
+                      enabled: category != 'ARMOR',
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
                         labelText: 'Durabilité max (ex: 3)',
@@ -345,30 +357,31 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
                       value: category,
-                      items: categories
-                          .map(
-                            (c) => DropdownMenuItem(value: c, child: Text(c)),
-                          )
-                          .toList(),
+                      items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                       onChanged: (v) => setS(() {
                         category = v!;
 
-                        // Remises à zéro propres
+                        // reset propres
                         if (category != 'WEAPON') {
                           weaponPresetValue = weaponPresets.first;
                           damage = null;
-                          twoHanded = false;          // ← important
                           dmgCustomCtrl.clear();
                         }
                         if (category != 'ARMOR') {
                           armorPresetValue = armorPresets.first;
                           defense = null;
                           defCustomCtrl.clear();
+                        } else {
+                          // ← ICI : on initialise defense selon le preset affiché
+                          if (armorPresetValue != 'Personnalisé…') {
+                            defense = int.parse(armorPresetValue.split(' ').first); // "1 DEF" -> 1
+                          } else {
+                            defense = int.tryParse(defCustomCtrl.text.trim());
+                          }
                         }
-                      }),
-
-                      decoration: const InputDecoration(labelText: 'Catégorie'),
-                    ),
+                    }),
+                    decoration: const InputDecoration(labelText: 'Catégorie'),
+                  ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -427,20 +440,25 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     const SizedBox(height: 16),
                     FilledButton(
                       onPressed: () async {
-                        // --- Validations simples ---
-                        if (category == 'WEAPON') {
-                          final hasDamage = (damage != null && damage!.trim().isNotEmpty)
-                              || dmgCustomCtrl.text.trim().isNotEmpty;
-                          if (!hasDamage) {
-                            ScaffoldMessenger.of(ctx).showSnackBar(
-                              const SnackBar(content: Text('Pour une arme, indique des dégâts.')),
-                            );
-                            return;
-                          }
+                        final name = nameCtrl.text.trim();
+                        final durability = int.tryParse(duraCtrl.text.trim()) ?? 3;
+
+                        if (name.isEmpty) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(content: Text('Le nom est obligatoire')),
+                          );
+                          return;
                         }
+
+                        // ← récupère la DEF effective si ARMOR
+                        int? effDefense;
                         if (category == 'ARMOR') {
-                          final defVal = defense ?? int.tryParse(defCustomCtrl.text.trim());
-                          if (defVal == null) {
+                          if (armorPresetValue != 'Personnalisé…') {
+                            effDefense = int.parse(armorPresetValue.split(' ').first);
+                          } else {
+                            effDefense = int.tryParse(defCustomCtrl.text.trim());
+                          }
+                          if (effDefense == null) {
                             ScaffoldMessenger.of(ctx).showSnackBar(
                               const SnackBar(content: Text('Pour une armure, indique la DEF.')),
                             );
@@ -448,89 +466,54 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                           }
                         }
 
-                        final name = nameCtrl.text.trim();
-                        final durability =
-                            int.tryParse(duraCtrl.text.trim()) ?? 3;
-                        if (name.isEmpty) {
-                          ScaffoldMessenger.of(ctx).showSnackBar(
-                            const SnackBar(
-                              content: Text('Le nom est obligatoire'),
-                            ),
-                          );
-                          return;
-                        }
                         final payload = <String, dynamic>{
                           'name': name,
-                          'durability_max': durability,
+                          'durability_max': (category == 'ARMOR') ? 0 : durability, // si tu veux ignorer la durabilité des armures
                           'compatible_slots': selected.toList(),
                           'category': category,
                           'created_by': supa.auth.currentUser!.id,
-                          // On nettoie selon la catégorie
-                          'damage': category == 'WEAPON'
-                              ? (() {
-                                  if (damage != null && damage!.isNotEmpty)
-                                    return damage;
-                                  final txt = dmgCustomCtrl.text.trim();
-                                  return txt.isNotEmpty ? txt : null;
-                                }())
-                              : null,
-                          'defense': category == 'ARMOR'
-                              ? (defense ??
-                                    int.tryParse(defCustomCtrl.text.trim()))
-                              : null,
-                        };
-                        if (imageUrl != null) {
-                          payload['image_url'] = imageUrl;
-                        }
 
-                        payload['two_handed'] = (category == 'WEAPON') ? twoHanded : null;
+                          'damage': category == 'WEAPON'
+                            ? (() {
+                                if (damage != null && damage!.isNotEmpty) return damage;
+                                final txt = dmgCustomCtrl.text.trim();
+                                return txt.isNotEmpty ? txt : null;
+                              }())
+                            : null,
+
+                          // ← utilise la DEF effective
+                          'defense': category == 'ARMOR'? (defense ?? int.tryParse(defCustomCtrl.text.trim())): null,
+
+                          // flags
+                          'two_handed': category == 'WEAPON' ? (twoHanded ?? false) : false,
+                          'two_body'  : category == 'ARMOR'  ? (twoBody   ?? false) : false,
+                        };
+
+                        if (imageUrl != null) payload['image_url'] = imageUrl;
 
                         try {
                           if (existing == null) {
-                            // CREATION
                             await supa.from('items').insert(payload).select();
                           } else {
-                            // MODIFICATION
                             final oldImage = existing['image_url'] as String?;
                             final newImage = imageUrl;
 
-                            await supa
-                                .from('items')
-                                .update(payload)
-                                .eq('id', existing['id'])
-                                .select();
+                            await supa.from('items').update(payload).eq('id', existing['id']).select();
 
-                            // Si l'image a changé : supprime l'ancienne
-                            if (oldImage != null &&
-                                newImage != null &&
-                                oldImage != newImage) {
+                            if (oldImage != null && newImage != null && oldImage != newImage) {
                               try {
-                                if (oldImage.contains(
-                                  '/object/public/items/',
-                                )) {
-                                  final path = oldImage
-                                      .split('/object/public/items/')
-                                      .last;
-                                  await supa.storage.from(bucket).remove([
-                                    path,
-                                  ]);
+                                if (oldImage.contains('/object/public/items/')) {
+                                  final path = oldImage.split('/object/public/items/').last;
+                                  await supa.storage.from(bucket).remove([path]);
                                 }
-                              } catch (_) {
-                                /* non bloquant */
-                              }
+                              } catch (_) {}
                             }
                           }
                           if (context.mounted) Navigator.pop(sheetCtx);
                           await _refresh();
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  existing == null
-                                      ? 'Item créé'
-                                      : 'Item mis à jour',
-                                ),
-                              ),
+                              SnackBar(content: Text(existing == null ? 'Item créé' : 'Item mis à jour')),
                             );
                           }
                         } on PostgrestException catch (e) {
@@ -644,6 +627,12 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                 final isOwner = (it['created_by'] == uid);
                 final isWeapon = it['category'] == 'WEAPON';
                 final isTwo = (it['two_handed'] as bool?) == true;
+                final isTwoBody = it['two_body'] == true;
+
+                final flags = [
+                  if (isTwo) '2 mains',
+                  if (isTwoBody) '2 corps',
+                ].join(' • ');
 
                 // Texte dégâts/défense pour l’aperçu
                 String extra = '';
@@ -670,7 +659,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                   subtitle: Text(
                       'Cat: ${it['category']} • Durabilité: ${it['durability_max']}'
                       ' • Slots: ${(it['compatible_slots'] as List?)?.join(", ") ?? "-"}'
-                      '$extra$twoTxt',
+                      '${extra}${flags.isNotEmpty ? ' • $flags' : ''}',
                     ),
                   trailing: isOwner
                       ? const Icon(Icons.edit)
