@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 // import 'package:flutter/scheduler.dart'; // ← inutilisé
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -130,7 +131,7 @@ class App extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Mausritter Companion',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFF445C4F)),
+      theme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color.fromARGB(255, 255, 255, 255)),
       // Si tu veux aussi déconnecter quand l’app passe en arrière-plan :
       home: const SignOutOnBackground(child: AuthGate()),
       // Sinon, juste :
@@ -221,65 +222,119 @@ class _AuthPageState extends State<AuthPage> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 4)));
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      appBar: AppBar(title: const Text('Connexion')),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: EdgeInsets.fromLTRB(16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: email,
-                decoration: const InputDecoration(labelText: 'Email'),
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: pass,
-                decoration: const InputDecoration(labelText: 'Mot de passe'),
-                obscureText: true,
-                textInputAction: TextInputAction.done,
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const Text('Mode:'), const SizedBox(width: 8),
-                  DropdownButton<String>(
-                    value: mode,
-                    items: const [
-                      DropdownMenuItem(value: 'login',  child: Text('Se connecter')),
-                      DropdownMenuItem(value: 'signup', child: Text('Créer un compte')),
-                    ],
-                    onChanged: (v) => setState(() => mode = v!),
-                  ),
-                  const SizedBox(width: 16),
-                  if (mode == 'signup') ...[
-                    const Text('Rôle:'), const SizedBox(width: 8),
-                    DropdownButton<String>(
-                      value: role,
-                      items: const [
-                        DropdownMenuItem(value: 'JOUEUR', child: Text('JOUEUR')),
-                        DropdownMenuItem(value: 'MJ',     child: Text('MJ')),
-                      ],
-                      onChanged: (v) => setState(() => role = v!),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: loading ? null : _submit,
-                child: Text(loading ? '...' : (mode == 'signup' ? 'Créer le compte' : 'Connexion')),
-              ),
-            ],
-          ),
+Widget build(BuildContext context) {
+  return Scaffold(
+    resizeToAvoidBottomInset: true,
+    appBar: AppBar(
+      title: Text(
+        'Connexion',
+        style: GoogleFonts.poppins(                // ⬅ police appliquée ici
+          fontWeight: FontWeight.w600,
         ),
       ),
-    );
-  }
+    ),
+    body: SafeArea(
+      child: SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: EdgeInsets.fromLTRB(
+          16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: email,
+              decoration: InputDecoration(
+                labelText: 'Email',
+                labelStyle: GoogleFonts.poppins(),   // ⬅ aussi ici
+              ),
+              keyboardType: TextInputType.emailAddress,
+              textInputAction: TextInputAction.next,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: pass,
+              decoration: InputDecoration(
+                labelText: 'Mot de passe',
+                labelStyle: GoogleFonts.poppins(),
+              ),
+              obscureText: true,
+              textInputAction: TextInputAction.done,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Text('Mode:', style: GoogleFonts.poppins()),
+                const SizedBox(width: 8),
+                DropdownButton<String>(
+                  value: mode,
+                  style: GoogleFonts.poppins(
+                    color: Colors.black, // ← texte sélectionné en noir
+                  ),
+                  iconEnabledColor: Colors.black, // ← flèche aussi en noir
+                  dropdownColor: Colors.white,    // ← fond du menu déroulant
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'login',
+                      child: Text('Se connecter', style: TextStyle(color: Colors.black)),
+                    ),
+                    DropdownMenuItem(
+                      value: 'signup',
+                      child: Text('Créer un compte', style: TextStyle(color: Colors.black)),
+                    ),
+                  ],
+                  onChanged: (v) => setState(() => mode = v!),
+                ),
+                const SizedBox(width: 16),
+                if (mode == 'signup') ...[
+                  Text('Rôle:', style: GoogleFonts.poppins()),
+                  const SizedBox(width: 8),
+                  DropdownButton<String>(
+                    value: role,
+                    style: GoogleFonts.poppins(color: Colors.black),
+                    iconEnabledColor: Colors.black,
+                    dropdownColor: Colors.white,
+                    items: const [
+                      DropdownMenuItem(value: 'JOUEUR', child: Text('JOUEUR', style: TextStyle(color: Colors.black))),
+                      DropdownMenuItem(value: 'MJ', child: Text('MJ', style: TextStyle(color: Colors.black))),
+                    ],
+                    onChanged: (v) => setState(() => role = v!),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                elevation: 0,
+                backgroundColor: const Color.fromARGB(255, 255, 255, 255), // fond papier (légèrement chaud)
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  side: const BorderSide(
+                    color: Colors.black87,  // trait crayon
+                    width: 1.3,             // léger, pas trop clean
+                    style: BorderStyle.solid,
+                  ),
+                ),
+              ),
+              onPressed: loading ? null : _submit,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  loading ? '...' : (mode == 'signup' ? 'Créer le compte' : 'Connexion'),
+                  style: const TextStyle(
+                    fontFamily: 'crayon',
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,  // texte crayon
+                    fontSize: 20,
+                    
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+ }
 }

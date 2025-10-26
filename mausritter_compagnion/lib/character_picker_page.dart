@@ -27,8 +27,9 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
 
     final data = await supa
         .from('characters')
-        .select('id,name,created_at')
+        .select('id,name,created_at,is_dead,death_at')
         .eq('owner_id', uid)
+        .order('is_dead', ascending: true)  
         .order('created_at', ascending: true);
 
     setState(() {
@@ -67,6 +68,16 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
 
   @override
   Widget build(BuildContext context) {
+    Widget _leadingIcon(Map<String, dynamic> c) {
+      final dead = (c['is_dead'] as bool?) ?? false;
+      if (dead) {
+        
+        // OPTION B (si tu as une image) :
+        return Image.asset('assets/icons/icon_souris_morte.png', width: 28, height: 28);
+      }
+      // Souris “vivante”
+      return Image.asset('assets/icons/icon_souris.png', width: 28, height: 28); // ton image
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Choisir une fiche'),
@@ -102,17 +113,16 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (_, i) {
                     final c = chars[i];
+                    final dead = (c['is_dead'] as bool?) ?? false;
+
                     return ListTile(
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Image.asset(
-                          'assets/icons/icon_souris.png',
-                          width: 42,
-                          height: 42,
-                          fit: BoxFit.cover,
-                        ),
+                      leading: _leadingIcon(c),                            // NEW
+                      title: Text(
+                        (c['name'] as String? ?? 'Sans nom'),
+                        style: dead
+                            ? const TextStyle(decoration: TextDecoration.lineThrough)
+                            : null,
                       ),
-                      title: Text(c['name'] as String? ?? 'Sans nom'),
                       subtitle: Text((c['id'] as String).substring(0, 8)),
                       onTap: () {
                         Navigator.of(context).push(
@@ -122,6 +132,7 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
                         );
                       },
                     );
+
                   },
                 ),
     );
