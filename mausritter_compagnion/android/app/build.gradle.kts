@@ -4,28 +4,28 @@ import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
-    id("kotlin-android")
-    // Le plugin Flutter doit venir après Android + Kotlin
+    id("org.jetbrains.kotlin.android") // plus moderne que "kotlin-android"
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val keystorePropertiesFile = rootProject.file("android/key.properties")
-val keystoreProperties = Properties().apply {
-    if (keystorePropertiesFile.exists()) {
-        load(FileInputStream(keystorePropertiesFile))
+val keystorePropsFile = rootProject.file("key.properties")
+val keystoreProps = Properties().apply {
+    if (!keystorePropsFile.exists()) {
+        throw GradleException("key.properties introuvable. Créez android/key.properties (voir modèle).")
     }
+    load(FileInputStream(keystorePropsFile))
 }
 
 android {
-    namespace = "com.vorn.mausritter_compagnion"      // <- libre, pour le code
+    namespace = "com.vorn.mausritter_compagnion"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     defaultConfig {
-        applicationId = "com.vorn.mousritter"        // <- ID **définitif Play Store**
-        minSdk = 21
+        applicationId = "com.vorn.mousritter"  // ← ID final Play Store
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = 1                              // <- incrémente à chaque release
+        versionCode = 1
         versionName = "1.0.0"
     }
 
@@ -36,32 +36,32 @@ android {
     kotlinOptions { jvmTarget = JavaVersion.VERSION_11.toString() }
 
     signingConfigs {
-        // Config release lue depuis android/key.properties
         create("release") {
-            if (keystorePropertiesFile.exists()) {
-                storeFile = file(keystoreProperties["storeFile"] as String)
-                storePassword = keystoreProperties["storePassword"] as String
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["keyPassword"] as String
-            } else {
-                println("⚠️ android/key.properties introuvable : la release sera signée en debug si vous l’assignez ci-dessous.")
-            }
+            val sf = keystoreProps["storeFile"]?.toString()
+                ?: throw GradleException("storeFile manquant dans key.properties")
+            val sp = keystoreProps["storePassword"]?.toString()
+                ?: throw GradleException("storePassword manquant dans key.properties")
+            val ka = keystoreProps["keyAlias"]?.toString()
+                ?: throw GradleException("keyAlias manquant dans key.properties")
+            val kp = keystoreProps["keyPassword"]?.toString()
+                ?: throw GradleException("keyPassword manquant dans key.properties")
+
+            // Chemin relatif depuis le module app
+            storeFile = file(sf)
+            storePassword = sp
+            keyAlias = ka
+            keyPassword = kp
         }
     }
 
     buildTypes {
-        getByName("debug") {
-            // Pas de minify en debug
-            isMinifyEnabled = false
-        }
         getByName("release") {
             isMinifyEnabled = false
-            // Utilise la vraie signature release
+            isShrinkResources = false
             signingConfig = signingConfigs.getByName("release")
-            // (Optionnel) Shrink resources + Proguard si tu veux
-            // isMinifyEnabled = true
-            // isShrinkResources = true
-            // proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        getByName("debug") {
+            isMinifyEnabled = false
         }
     }
 }
