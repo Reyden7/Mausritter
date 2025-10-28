@@ -1,4 +1,4 @@
-package com.example.mausritter_compagnion
+package com.vorn.mausritter
 
 import io.flutter.embedding.android.FlutterActivity
 

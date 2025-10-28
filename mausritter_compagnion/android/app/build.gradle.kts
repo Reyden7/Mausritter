@@ -17,12 +17,12 @@ val keystoreProps = Properties().apply {
 }
 
 android {
-    namespace = "com.vorn.mausritter_compagnion"
+    namespace = "com.vorn.mausritter"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     defaultConfig {
-        applicationId = "com.vorn.mousritter"  // ← ID final Play Store
+        applicationId = "com.vorn.mausritter"  // ← ID final Play Store
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = 1
