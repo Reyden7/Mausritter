@@ -162,6 +162,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
     final selected = <String>{
       ...(existing?['compatible_slots']?.cast<String>() ?? <String>[]),
     };
+    int packSize = (existing?['pack_size'] as int?)?.clamp(1,6) ?? 1;
     String? imageUrl = existing?['image_url'];
     bool twoHanded = (existing?['two_handed'] as bool?) ?? false;
     bool twoBody   = (existing?['two_body']   as bool?) ?? false;
@@ -228,24 +229,33 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     const SizedBox(height: 6),
 
                     DropdownButtonFormField<String>(
-                      value: weaponPresetValue,
-                      items: weaponPresets
-                          .map(
-                            (d) => DropdownMenuItem(value: d, child: Text(d)),
-                          )
+                      value: category,
+                      items: categories
+                          .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                           .toList(),
                       onChanged: (v) => setS(() {
-                        if (v == null) return;
-                        weaponPresetValue = v;
-                        if (v == 'Personnalisé…') {
-                          // si le champ est vide → damage = null
-                          final t = dmgCustomCtrl.text.trim();
-                          damage = t.isEmpty ? null : t;
+                        category = v!;
+
+                        // resets propres
+                        if (category != 'WEAPON') {
+                          weaponPresetValue = weaponPresets.first;
+                          damage = null;
+                          dmgCustomCtrl.clear();
+                        }
+                        if (category != 'ARMOR') {
+                          armorPresetValue = armorPresets.first;
+                          defense = null;
+                          defCustomCtrl.clear();
                         } else {
-                          damage = v; // un des presets
+                          // initialise DEF selon le preset affiché
+                          if (armorPresetValue != 'Personnalisé…') {
+                            defense = int.parse(armorPresetValue.split(' ').first);
+                          } else {
+                            defense = int.tryParse(defCustomCtrl.text.trim());
+                          }
                         }
                       }),
-                      decoration: const InputDecoration(labelText: 'Preset'),
+                      decoration: const InputDecoration(labelText: 'Catégorie'),
                     ),
 
                     if (weaponPresetValue == 'Personnalisé…') ...[
@@ -331,6 +341,26 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                 );
               }
 
+              Widget _packSizeSection() {
+                if (!selected.contains('PACK')) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    children: [
+                      const Text('Taille (PACK) : '),
+                      const SizedBox(width: 8),
+                      DropdownButton<int>(
+                        value: packSize,
+                        items: [1, 2, 3, 4, 5, 6]
+                            .map((n) => DropdownMenuItem(value: n, child: Text('$n')))
+                            .toList(),
+                        onChanged: (v) => setS(() => packSize = v ?? 1),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
               return SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -404,6 +434,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     // Sections conditionnelles
                     _weaponSection(),
                     _armorSection(),
+                    _packSizeSection(),
 
                     const SizedBox(height: 12),
                     Row(
@@ -465,6 +496,9 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                             return;
                           }
                         }
+                        if (!selected.contains('PACK') && packSize > 1) {
+                          packSize = 1;
+                        }
 
                         final payload = <String, dynamic>{
                           'name': name,
@@ -487,6 +521,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                           // flags
                           'two_handed': category == 'WEAPON' ? (twoHanded ?? false) : false,
                           'two_body'  : category == 'ARMOR'  ? (twoBody   ?? false) : false,
+                          'pack_size': selected.contains('PACK') ? packSize : 1,
                         };
 
                         if (imageUrl != null) payload['image_url'] = imageUrl;
@@ -641,7 +676,17 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                 } else if (it['category'] == 'ARMOR' && it['defense'] != null) {
                   extra = ' • DEF: ${it['defense']}';
                 }
+                // Taille PACK
+                final comp = (it['compatible_slots'] as List?) ?? const [];
+                final rawPackSize = it['pack_size'];
+                final int packSize = rawPackSize is int
+                    ? rawPackSize
+                    : int.tryParse(rawPackSize?.toString() ?? '1') ?? 1;
+                final showPackSize = comp.contains('PACK') && packSize > 1;
+                final packTxt = showPackSize ? ' • Taille: $packSize cases' : '';
+
                 final twoTxt = isWeapon && isTwo ? ' • (2 mains)' : '';
+                
 
                 return ListTile(
                   leading: (it['image_url'] != null)
@@ -657,10 +702,11 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                       : const Icon(Icons.inventory_2_outlined),
                   title: Text(it['name'] ?? ''),
                   subtitle: Text(
-                      'Cat: ${it['category']} • Durabilité: ${it['durability_max']}'
-                      ' • Slots: ${(it['compatible_slots'] as List?)?.join(", ") ?? "-"}'
-                      '${extra}${flags.isNotEmpty ? ' • $flags' : ''}',
-                    ),
+                    'Cat: ${it['category']} • Durabilité: ${it['durability_max']}'
+                    ' • Slots: ${comp.isEmpty ? "-" : comp.join(", ")}'
+                    '$extra${flags.isNotEmpty ? ' • $flags' : ''}'
+                    '$packTxt',
+                  ),
                   trailing: isOwner
                       ? const Icon(Icons.edit)
                       : const Icon(Icons.lock_outline),
