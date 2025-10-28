@@ -23,3 +23,5 @@ L’objectif est simple :
 👉 remplacer la fiche papier sans jamais trahir l’esprit de Mausritter
 👉 préserver le côté tactile, minimaliste, “papier crayonné” du jeu
 👉 accélérer la mise en place et éviter les erreurs d’inventaire / slots
+
+URL pour la version web : https://mausritter-companion.netlify.app/
