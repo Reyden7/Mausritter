@@ -1095,13 +1095,7 @@ Widget build(BuildContext context) {
         title: const Text('Fiche de personnage'),
         centerTitle: false,
         actions: [
-          IconButton(
-            tooltip: 'Enregistrer',
-            onPressed: (_isLoading)
-                ? null
-                : () => _saveCharacter(force: true, showFeedback: true),
-            icon: const Icon(Icons.save),
-          ),
+          
           const SizedBox(width: 4),
           TextButton(
             onPressed: isDead ? null : _killMouse,

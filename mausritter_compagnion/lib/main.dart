@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-// import 'package:flutter/scheduler.dart'; // ← inutilisé
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_config.dart';
 import 'items_admin_page.dart';
-import 'player_sheet_page.dart'; // utile si tu l’ouvres directement quelque part
+// utile si tu l’ouvres directement quelque part
 import 'package:mausritter_compagnion/character_picker_page.dart' as picker;
 
 // ---------------- Déconnexion quand l’app part en arrière-plan (optionnel) ----------------
@@ -33,10 +31,10 @@ class _SignOutOnBackgroundState extends State<SignOutOnBackground>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
-    // Déconnecte quand l’app n’est plus active (tu peux commenter si tu ne veux pas)
+    // Déconnecte quand l’app n’est plus active (optionnel)
     if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
       try {
-        await Supabase.instance.client.auth.signOut(); // ou: signOut(scope: SignOutScope.global)
+        await Supabase.instance.client.auth.signOut();
       } catch (_) {}
     }
   }
@@ -64,8 +62,7 @@ class _AuthGateState extends State<AuthGate> {
   Future<void> _forceSignOutThenShowLogin() async {
     final supa = Supabase.instance.client;
     try {
-      // Révoque la session persistée → on montre toujours la page de connexion
-      await supa.auth.signOut(); // ou: signOut(scope: SignOutScope.global)
+      await supa.auth.signOut();
     } catch (_) {
       // non bloquant
     } finally {
@@ -121,7 +118,6 @@ void main() async {
     anonKey: AppConfig.supabaseAnonKey,
   );
 
-  // ⛔️ Plus besoin de signOut ici (on le fait dans AuthGate.initState)
   runApp(const App());
 }
 
@@ -129,13 +125,69 @@ class App extends StatelessWidget {
   const App({super.key});
   @override
   Widget build(BuildContext context) {
+    // Thème 100% noir & blanc, police globale 'crayon'
+    final base = ThemeData(
+      useMaterial3: true,
+      fontFamily: 'crayon',
+      brightness: Brightness.light,
+      scaffoldBackgroundColor: Colors.white,
+      colorScheme: const ColorScheme.light(
+        primary: Colors.black,
+        onPrimary: Colors.white,
+        secondary: Colors.black,
+        onSecondary: Colors.white,
+        surface: Colors.white,
+        onSurface: Colors.black,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        centerTitle: false,
+        titleTextStyle: TextStyle(
+          fontFamily: 'crayon',
+          fontWeight: FontWeight.w700,
+          fontSize: 24,
+          color: Colors.black,
+        ),
+      ),
+      inputDecorationTheme: const InputDecorationTheme(
+        isDense: true,
+        border: OutlineInputBorder(
+          borderSide: BorderSide(width: 1.4, color: Colors.black),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(width: 1.4, color: Colors.black),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: BorderSide(width: 1.8, color: Colors.black),
+        ),
+        labelStyle: TextStyle(
+          color: Colors.black,
+          fontFamily: 'crayon',
+          fontSize: 16,
+        ),
+        hintStyle: TextStyle(color: Colors.black54, fontFamily: 'crayon'),
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      ),
+      textSelectionTheme: const TextSelectionThemeData(
+        cursorColor: Colors.black,
+        selectionColor: Colors.black12,
+        selectionHandleColor: Colors.black,
+      ),
+      iconTheme: const IconThemeData(color: Colors.black),
+      dropdownMenuTheme: const DropdownMenuThemeData(
+        textStyle: TextStyle(color: Colors.black, fontFamily: 'crayon'),
+      ),
+    );
+
     return MaterialApp(
       title: 'Mausritter Companion',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color.fromARGB(255, 255, 255, 255)),
-      // Si tu veux aussi déconnecter quand l’app passe en arrière-plan :
+      theme: base,
+      // Déconnexion auto en arrière-plan (si tu veux)
       home: const SignOutOnBackground(child: AuthGate()),
-      // Sinon, juste :
-      // home: const AuthGate(),
+      // Sinon : home: const AuthGate(),
     );
   }
 }
@@ -174,7 +226,7 @@ class _AuthPageState extends State<AuthPage> {
           return;
         }
 
-        _toast('✅ Compte créé ! Vérifie ta boîte mail et confirme ton compte, puis connecte-toi.');
+        _toast('✅ Compte créé ! Vérifie ta boîte mail puis connecte-toi.');
         await Future.delayed(const Duration(milliseconds: 800));
         if (mounted) setState(() => mode = 'login');
         return;
@@ -222,119 +274,205 @@ class _AuthPageState extends State<AuthPage> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 4)));
 
   @override
-Widget build(BuildContext context) {
-  return Scaffold(
-    resizeToAvoidBottomInset: true,
-    appBar: AppBar(
-      title: Text(
-        'Connexion',
-        style: GoogleFonts.poppins(                // ⬅ police appliquée ici
-          fontWeight: FontWeight.w600,
+  Widget build(BuildContext context) {
+    // PAGE CENTRÉE : carte “papier” noir & blanc
+    return Scaffold(
+      appBar: AppBar(title: const Text('MauseRitter companion')),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.black, width: 1.6),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
+                  child: SingleChildScrollView(
+                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // --- IMAGE BANDEAU ICI ---
+                        Center(
+                          child: Image.asset(
+                            'assets/icons/torch-mouse.png',
+                            width: MediaQuery.of(context).size.width * 0.7, // auto-responsive (~70%)
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        // Titre style “écrit à la main”
+                        const Text(
+                          'Connexion',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontFamily: 'crayon',
+                            fontSize: 28,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        // Petite ligne horizontale “crayon”
+                        Container(height: 1.6, color: Colors.black),
+                        const SizedBox(height: 18),
+
+                        // Email
+                        const Text('Email'),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: email,
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
+                          style: const TextStyle(fontSize: 16),
+                          decoration: const InputDecoration(
+                            hintText: 'souris@fromage.burrow',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Mot de passe
+                        const Text('Mot de passe'),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: pass,
+                          obscureText: true,
+                          textInputAction: TextInputAction.done,
+                          style: const TextStyle(fontSize: 16),
+                          decoration: const InputDecoration(
+                            hintText: '••••••••',
+                          ),
+                        ),
+
+                        const SizedBox(height: 14),
+                        // Mode + Rôle (rôle seulement en signup)
+                        Row(
+                          children: [
+                            const Text('Mode:'),
+                            const SizedBox(width: 8),
+                            _MonoDropdown<String>(
+                              value: mode,
+                              items: const [
+                                DropdownMenuItem(value: 'login', child: Text('Se connecter')),
+                                DropdownMenuItem(value: 'signup', child: Text('Créer un compte')),
+                              ],
+                              onChanged: (v) => setState(() => mode = v!),
+                            ),
+                            const Spacer(),
+                            if (mode == 'signup') ...[
+                              const Text('Rôle:'),
+                              const SizedBox(width: 8),
+                              _MonoDropdown<String>(
+                                value: role,
+                                items: const [
+                                  DropdownMenuItem(value: 'JOUEUR', child: Text('JOUEUR')),
+                                  DropdownMenuItem(value: 'MJ', child: Text('MJ')),
+                                ],
+                                onChanged: (v) => setState(() => role = v!),
+                              ),
+                            ],
+                          ],
+                        ),
+
+                        const SizedBox(height: 18),
+
+                        // Bouton submit : blanc, bord noir (style papier)
+                        SizedBox(
+                          height: 46,
+                          child: OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.black,
+                              backgroundColor: Colors.white,
+                              side: const BorderSide(color: Colors.black, width: 1.6),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            onPressed: loading ? null : _submit,
+                            child: Text(
+                              loading
+                                  ? '...'
+                                  : (mode == 'signup' ? 'Créer le compte' : 'Connexion'),
+                              style: const TextStyle(
+                                fontFamily: 'crayon',
+                                fontWeight: FontWeight.w800,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 12),
+                        // Lien de bascule
+                        TextButton(
+                          onPressed: () => setState(() {
+                            mode = (mode == 'login') ? 'signup' : 'login';
+                          }),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.black,
+                            overlayColor: Colors.black12,
+                          ),
+                          child: Text(
+                            mode == 'login'
+                                ? 'Créer un compte'
+                                : 'J’ai déjà un compte',
+                            style: const TextStyle(
+                              fontFamily: 'crayon',
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
-    ),
-    body: SafeArea(
-      child: SingleChildScrollView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: EdgeInsets.fromLTRB(
-          16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextField(
-              controller: email,
-              decoration: InputDecoration(
-                labelText: 'Email',
-                labelStyle: GoogleFonts.poppins(),   // ⬅ aussi ici
-              ),
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: pass,
-              decoration: InputDecoration(
-                labelText: 'Mot de passe',
-                labelStyle: GoogleFonts.poppins(),
-              ),
-              obscureText: true,
-              textInputAction: TextInputAction.done,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Text('Mode:', style: GoogleFonts.poppins()),
-                const SizedBox(width: 8),
-                DropdownButton<String>(
-                  value: mode,
-                  style: GoogleFonts.poppins(
-                    color: Colors.black, // ← texte sélectionné en noir
-                  ),
-                  iconEnabledColor: Colors.black, // ← flèche aussi en noir
-                  dropdownColor: Colors.white,    // ← fond du menu déroulant
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'login',
-                      child: Text('Se connecter', style: TextStyle(color: Colors.black)),
-                    ),
-                    DropdownMenuItem(
-                      value: 'signup',
-                      child: Text('Créer un compte', style: TextStyle(color: Colors.black)),
-                    ),
-                  ],
-                  onChanged: (v) => setState(() => mode = v!),
-                ),
-                const SizedBox(width: 16),
-                if (mode == 'signup') ...[
-                  Text('Rôle:', style: GoogleFonts.poppins()),
-                  const SizedBox(width: 8),
-                  DropdownButton<String>(
-                    value: role,
-                    style: GoogleFonts.poppins(color: Colors.black),
-                    iconEnabledColor: Colors.black,
-                    dropdownColor: Colors.white,
-                    items: const [
-                      DropdownMenuItem(value: 'JOUEUR', child: Text('JOUEUR', style: TextStyle(color: Colors.black))),
-                      DropdownMenuItem(value: 'MJ', child: Text('MJ', style: TextStyle(color: Colors.black))),
-                    ],
-                    onChanged: (v) => setState(() => role = v!),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                elevation: 0,
-                backgroundColor: const Color.fromARGB(255, 255, 255, 255), // fond papier (légèrement chaud)
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  side: const BorderSide(
-                    color: Colors.black87,  // trait crayon
-                    width: 1.3,             // léger, pas trop clean
-                    style: BorderStyle.solid,
-                  ),
-                ),
-              ),
-              onPressed: loading ? null : _submit,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  loading ? '...' : (mode == 'signup' ? 'Créer le compte' : 'Connexion'),
-                  style: const TextStyle(
-                    fontFamily: 'crayon',
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,  // texte crayon
-                    fontSize: 20,
-                    
-                  ),
-                ),
-              ),
-            ),
-          ],
+    );
+  }
+}
+
+// Dropdown monochrome (fond blanc, texte noir, bordure noire)
+class _MonoDropdown<T> extends StatelessWidget {
+  final T value;
+  final List<DropdownMenuItem<T>> items;
+  final void Function(T?) onChanged;
+  const _MonoDropdown({
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.black, width: 1.4),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: DropdownButton<T>(
+          value: value,
+          items: items,
+          onChanged: onChanged,
+          underline: const SizedBox.shrink(),
+          isDense: true,
+          icon: const Icon(Icons.arrow_drop_down, color: Colors.black),
+          dropdownColor: Colors.white,
+          style: const TextStyle(
+            color: Colors.black,
+            fontFamily: 'crayon',
+            fontSize: 16,
+          ),
         ),
       ),
-    ),
-  );
- }
+    );
+  }
 }

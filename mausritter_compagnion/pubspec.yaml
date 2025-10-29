@@ -33,6 +33,7 @@ flutter:
     - assets/icons/icon_souris.png
     - assets/icons/icon_souris_morte.png
     - assets/icons/fond.jpg
+    - assets/icons/torch-mouse.png
     
 
   fonts:
