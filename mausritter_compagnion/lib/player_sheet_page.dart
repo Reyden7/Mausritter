@@ -161,6 +161,7 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
             'hp': {'max': 4, 'cur': 4},
           },
           'slots': {},
+          'pepin_cur': 0,
         })
         .select('id')
         .single();
@@ -252,6 +253,8 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
   Timer? _saveTimer;
   DateTime _lastSave = DateTime.fromMillisecondsSinceEpoch(0);
   bool isDead = false;
+  final pepinCtrl = TextEditingController(text: '0');
+  int pepinCur = 0;
 
   void _scheduleAutoSave() {
     _saveTimer?.cancel();
@@ -306,6 +309,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
     backgroundCtrl.dispose();
     levelCtrl.dispose();
     xpCtrl.dispose();
+    pepinCtrl.dispose();
     super.dispose();
   }
 
@@ -640,6 +644,8 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
     levelCtrl.text = '$level';
     xp = (r['xp'] ?? 0) as int;
     xpCtrl.text = '$xp';
+    pepinCur = (r['pepin_cur'] ?? 0) as int;
+    pepinCtrl.text = '$pepinCur';
 
     final stats = (r['stats'] ?? {}) as Map<String, dynamic>;
     strMax = (stats['str']?['max'] ?? 10) as int;
@@ -741,6 +747,7 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
             'wil_max': wilMax,
             'hp_cur': hpCur,
             'hp_max': hpMax,
+            'pepin_cur': 0,
           })
           .select()
           .single();
@@ -799,6 +806,7 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
             'wil_cur': wilCur,
             'hp_max': hpMax,
             'hp_cur': hpCur,
+            'pepin_cur': pepinCur,
           })
           .eq('id', id);
 
@@ -1398,8 +1406,8 @@ Widget build(BuildContext context) {
   // Cadre Caractéristiques
   Widget _statsRightBox() {
     const labelStyle = TextStyle(fontSize: 11);
-    const fieldH = 26.0;
-    const fieldW = 34.0;
+    const fieldH = 30.0;
+    const fieldW = 37.0;
 
     String _digits(String s) => s.replaceAll(RegExp(r'[^0-9]'), '');
 
@@ -1500,6 +1508,7 @@ Widget build(BuildContext context) {
                 width: 48,
                 height: fieldH,
                 child: TextField(
+                  controller: pepinCtrl,                // ← NEW
                   keyboardType: TextInputType.number,
                   textAlign: TextAlign.center,
                   style: labelStyle,
@@ -1507,7 +1516,16 @@ Widget build(BuildContext context) {
                     isDense: true,
                     border: OutlineInputBorder(),
                   ),
-                  onChanged: (_) {
+                  onChanged: (v) {
+                    final only = v.replaceAll(RegExp(r'[^0-9]'), '');
+                    final val = int.tryParse(only) ?? pepinCur;
+                    pepinCur = val.clamp(0, 250);       // ← bornes UI
+                    if (pepinCtrl.text != '$pepinCur') {
+                      pepinCtrl.text = '$pepinCur';
+                      pepinCtrl.selection = TextSelection.fromPosition(
+                        TextPosition(offset: pepinCtrl.text.length),
+                      );
+                    }
                     _scheduleAutoSave();
                   },
                 ),
