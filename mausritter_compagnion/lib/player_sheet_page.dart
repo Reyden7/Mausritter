@@ -71,6 +71,7 @@ class EquippedItem {
 
   final bool two_handed;
   final bool two_body;
+  final int packSize;
 
   EquippedItem({
     required this.id,
@@ -83,6 +84,7 @@ class EquippedItem {
     this.defense,
     this.two_handed = false,
     this.two_body = false,
+    this.packSize = 1,
   });
 }
 
@@ -307,6 +309,43 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
     super.dispose();
   }
 
+  bool _isPack(SlotType s) =>
+    s == SlotType.pack1 || s == SlotType.pack2 || s == SlotType.pack3 ||
+    s == SlotType.pack4 || s == SlotType.pack5 || s == SlotType.pack6;
+
+  static const List<SlotType> _packs = [
+    SlotType.pack1, SlotType.pack2, SlotType.pack3,
+    SlotType.pack4, SlotType.pack5, SlotType.pack6,
+  ];
+
+int _packIndex(SlotType s) => _packs.indexOf(s); // 0..5
+
+/// Cherche un bloc contigu de 'need' cases PACK libres.
+/// Essaie d’abord depuis 'preferredStart' si fourni.
+List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
+  if (need <= 1) return [];
+  final occ = _packs.map((s) => equipment[s] != null).toList(); // true=occupé
+
+  List<SlotType> tryFrom(int start) {
+    if (start + need > _packs.length) return [];
+    for (var i = start; i < start + need; i++) {
+      if (occ[i]) return [];
+    }
+    return _packs.sublist(start, start + need);
+  }
+
+  if (preferredStart != null) {
+    final idx = _packIndex(preferredStart);
+    final b = tryFrom(idx);
+    if (b.isNotEmpty) return b;
+  }
+  for (var i = 0; i <= _packs.length - need; i++) {
+    final b = tryFrom(i);
+    if (b.isNotEmpty) return b;
+  }
+  return [];
+}
+
   // ------- Sélecteur d’items filtrés par slot + déséquipement -------
   Future<void> _pickItemForSlot(SlotType slot) async {
     final tag = slotTag(slot);
@@ -315,7 +354,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
       final rows = await supa
           .from('items')
           .select(
-            'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed,two_body',
+            'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed,two_body,pack_size',
           )
           .contains('compatible_slots', [tag])
           .order('name');
@@ -389,7 +428,72 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
             : int.tryParse('${chosen['defense'] ?? ''}'),
         two_handed: (chosen['two_handed'] as bool?) ?? false,
         two_body: (chosen['two_body'] as bool?) ?? false,
+        packSize: (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1,
       );
+
+      
+      // --- GESTION DES OBJETS VOLUMINEUX (PACK) ---
+      
+
+      if (slotTag(slot) == 'PACK') {
+        final int packSize = (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1;
+        if (packSize > 1) {
+        // ordre fixe des slots PACK
+        const order = [
+          SlotType.pack1, SlotType.pack2, SlotType.pack3,
+          SlotType.pack4, SlotType.pack5, SlotType.pack6,
+        ];
+        final start = order.indexOf(slot);
+        if (start < 0) return; // sécurité
+
+        // ⚠️ Ici le bug fréquent : utiliser < et PAS <=
+        final List<SlotType> need = [];
+        for (int i = 0; i < packSize; i++) {
+          final idx = start + i;
+          if (idx >= order.length) {
+            // dépassement → pas assez de place
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Pas assez de place dans l’inventaire.')),
+            );
+            return;
+          }
+          need.add(order[idx]);
+        }
+        // vérifie que toutes les cases sont libres
+        final bool allFree = need.every((s) => equipment[s] == null);
+        if (!allFree) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Fais de la place : objet trop volumineux.')),
+          );
+          return;
+        }
+        // pose l’objet sur exactement packSize cases
+        setState(() {
+          for (final s in need) {
+            equipment[s] = equipped;
+          }
+        });
+
+        // sauvegarde chaque case en BDD
+        final id = _characterId;
+        if (id != null) {
+          for (final s in need) {
+            await supa.from('character_items').upsert({
+              'character_id': id,
+              'slot': _slotToDb(s),
+              'item_id': equipped.id,
+              'durability_used': equipped.durabilityUsed,
+            }, onConflict: 'character_id,slot');
+          }
+        }
+
+        // gestion de la durabilité : une seule valeur répliquée
+        await _updateDurability(slot, 0);
+        return; // important : on a déjà tout fait
+        }
+      }
+
+
 
       setState(() {
         // place dans le slot cliqué
@@ -408,7 +512,12 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
             equipped.two_body) {
           equipment[_otherBody(slot)] = equipped;
         }
+
+        
       });
+
+      
+
 
       await _saveCharacter();
 
@@ -439,6 +548,18 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
       // Armures 2 corps : libérer l’autre case corps
       if (it.category == 'ARMOR' && it.two_body && _isBody(slot)) {
         equipment[_otherBody(slot)] = null;
+      }
+
+      // GROS OBJET PACK : libérer toutes les cases PACK contenant le même item.id
+      if (_isPack(slot) && it.packSize > 1) {
+        for (final s in _packs) {
+          if (equipment[s]?.id == it.id) {
+            equipment[s] = null;
+          }
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Objet retiré de toutes les cases occupées.')),
+        );
       }
     }
 
@@ -539,7 +660,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
     final eq = await supa
         .from('character_items')
         .select(
-          'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense,two_handed, two_body)',
+          'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense,two_handed, two_body, pack_size)',
         )
         .eq('character_id', characterId);
 
@@ -566,6 +687,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
             : int.tryParse('${item['defense'] ?? ''}'),
         two_handed: (item['two_handed'] as bool?) ?? false,
         two_body: (item['two_body'] as bool?) ?? false,
+        packSize: (item['pack_size'] as int?)?.clamp(1, 6) ?? 1,
       );
 
       equipment[slot] = equipped;
@@ -861,6 +983,19 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
           'durability_used': newUsed,
         }, onConflict: 'character_id,slot');
       }
+      // PACK multi-cases : refléter la même durabilité sur toutes les cases occupées
+      if (_isPack(slot) && it.packSize > 1) {
+        for (final s in _packs) {
+          if (equipment[s]?.id == it.id) {
+            await supa.from('character_items').upsert({
+              'character_id': id,
+              'slot': _slotToDb(s),
+              'item_id': it.id,
+              'durability_used': newUsed,
+            }, onConflict: 'character_id,slot');
+          }
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -925,7 +1060,6 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
   // ------------------------- UI -------------------------
   @override
 Widget build(BuildContext context) {
-  final warmWhite = const Color(0xFFFAF8F3); // blanc légèrement chaleureux
   final ink = const Color(0xFF2C2A29);
   final base = Theme.of(context);
 
