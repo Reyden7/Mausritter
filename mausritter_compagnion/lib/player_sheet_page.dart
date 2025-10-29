@@ -431,6 +431,70 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
         packSize: (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1,
       );
 
+      
+      // --- GESTION DES OBJETS VOLUMINEUX (PACK) ---
+      
+
+      if (slotTag(slot) == 'PACK') {
+        final int packSize = (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1;
+        if (packSize > 1) {
+        // ordre fixe des slots PACK
+        const order = [
+          SlotType.pack1, SlotType.pack2, SlotType.pack3,
+          SlotType.pack4, SlotType.pack5, SlotType.pack6,
+        ];
+        final start = order.indexOf(slot);
+        if (start < 0) return; // sécurité
+
+        // ⚠️ Ici le bug fréquent : utiliser < et PAS <=
+        final List<SlotType> need = [];
+        for (int i = 0; i < packSize; i++) {
+          final idx = start + i;
+          if (idx >= order.length) {
+            // dépassement → pas assez de place
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Pas assez de place dans l’inventaire.')),
+            );
+            return;
+          }
+          need.add(order[idx]);
+        }
+        // vérifie que toutes les cases sont libres
+        final bool allFree = need.every((s) => equipment[s] == null);
+        if (!allFree) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Fais de la place : objet trop volumineux.')),
+          );
+          return;
+        }
+        // pose l’objet sur exactement packSize cases
+        setState(() {
+          for (final s in need) {
+            equipment[s] = equipped;
+          }
+        });
+
+        // sauvegarde chaque case en BDD
+        final id = _characterId;
+        if (id != null) {
+          for (final s in need) {
+            await supa.from('character_items').upsert({
+              'character_id': id,
+              'slot': _slotToDb(s),
+              'item_id': equipped.id,
+              'durability_used': equipped.durabilityUsed,
+            }, onConflict: 'character_id,slot');
+          }
+        }
+
+        // gestion de la durabilité : une seule valeur répliquée
+        await _updateDurability(slot, 0);
+        return; // important : on a déjà tout fait
+        }
+      }
+
+
+
       setState(() {
         // place dans le slot cliqué
         equipment[slot] = equipped;
@@ -448,30 +512,12 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
             equipped.two_body) {
           equipment[_otherBody(slot)] = equipped;
         }
+
+        
       });
 
-      // --- GESTION DES OBJETS VOLUMINEUX (PACK) ---
-      if (_isPack(slot) && equipped.packSize > 1) {
-        final needed = equipped.packSize;
+      
 
-        final bloc = _findContiguousFreePacks(needed, preferredStart: slot);
-        if (bloc.isEmpty) {
-          // Pas assez de place contiguë → annuler
-          setState(() => equipment[slot] = null);
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Pas assez de place : cet objet nécessite $needed cases contiguës.")),
-          );
-          return;
-        }
-
-        // Poser l’item dans toutes les cases du bloc
-        setState(() {
-          for (final s in bloc) {
-            equipment[s] = equipped;
-          }
-        });
-      }
 
       await _saveCharacter();
 
@@ -1014,7 +1060,6 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
   // ------------------------- UI -------------------------
   @override
 Widget build(BuildContext context) {
-  final warmWhite = const Color(0xFFFAF8F3); // blanc légèrement chaleureux
   final ink = const Color(0xFF2C2A29);
   final base = Theme.of(context);
 
