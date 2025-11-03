@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_config.dart';
 import 'items_admin_page.dart';
@@ -207,6 +208,36 @@ class _AuthPageState extends State<AuthPage> {
   bool loading = false;
   final supa = Supabase.instance.client;
 
+  // --- Remember ID (email) ---
+  bool rememberId = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRememberedEmail();
+  }
+
+  Future<void> _loadRememberedEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('remembered_email');
+    if (!mounted) return;
+    if (saved != null && saved.isNotEmpty) {
+      setState(() {
+        email.text = saved;
+        rememberId = true;
+      });
+    }
+  }
+
+  Future<void> _persistRememberedEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (rememberId) {
+      await prefs.setString('remembered_email', email.text.trim());
+    } else {
+      await prefs.remove('remembered_email');
+    }
+  }
+
   Future<void> _submit() async {
     setState(() => loading = true);
     try {
@@ -219,6 +250,7 @@ class _AuthPageState extends State<AuthPage> {
         final uid = res.user?.id;
         if (uid != null) {
           await _upsertProfile(uid, role);
+          await _persistRememberedEmail();
           if (!mounted) return;
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const RoleGate()),
@@ -238,6 +270,7 @@ class _AuthPageState extends State<AuthPage> {
 
         final uid = supa.auth.currentUser!.id;
         await _ensureProfile(uid, role);
+        await _persistRememberedEmail();
 
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
@@ -322,16 +355,82 @@ class _AuthPageState extends State<AuthPage> {
                         Container(height: 1.6, color: Colors.black),
                         const SizedBox(height: 18),
 
-                        // Email
-                        const Text('Email'),
-                        const SizedBox(height: 6),
-                        TextField(
-                          controller: email,
-                          keyboardType: TextInputType.emailAddress,
-                          textInputAction: TextInputAction.next,
-                          style: const TextStyle(fontSize: 16),
-                          decoration: const InputDecoration(
-                            hintText: 'souris@fromage.burrow',
+                        // Email + checkbox "Se souvenir" alignée à droite
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            // Champ email élargi
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: const [
+                                  Text('Email'),
+                                  SizedBox(height: 6),
+                                ],
+                              ),
+                            ),
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: const [
+                                Text('Se souvenir', style: TextStyle(fontSize: 11)),
+                                SizedBox(height: 6),
+                              ],
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              height: 24,
+                              width: 24,
+                              child: Checkbox(
+                                value: null, // placeholder, sera surchargé en StatefulBuilder
+                                onChanged: null,
+                              ),
+                            ),
+                          ],
+                        ),
+                        // On remplace la Checkbox ci-dessus par une version avec état via Builder pour accéder à rememberId
+                        Builder(
+                          builder: (_) => Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: email,
+                                  keyboardType: TextInputType.emailAddress,
+                                  textInputAction: TextInputAction.next,
+                                  style: const TextStyle(fontSize: 16),
+                                  decoration: const InputDecoration(
+                                    hintText: 'souris@fromage.fr',
+                                  ),
+                                  onChanged: (_) {
+                                    // si déjà coché, on met à jour la valeur stockée en live
+                                    if (rememberId) {
+                                      _persistRememberedEmail();
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(height: 0), // pour aligner la case
+                                  SizedBox(
+                                    height: 24,
+                                    width: 24,
+                                    child: Checkbox(
+                                      value: rememberId,
+                                      onChanged: (v) async {
+                                        setState(() => rememberId = v ?? false);
+                                        await _persistRememberedEmail();
+                                      },
+                                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                      side: const BorderSide(color: Colors.black, width: 1.4),
+                                      activeColor: Colors.black,
+                                      checkColor: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 12),
