@@ -1321,7 +1321,7 @@ Widget build(BuildContext context) {
     const labelStyle = TextStyle(fontSize: 11);
     const fieldH = 26.0;
     const lvlW = 25.0;
-    const xpW = 40.0;
+    const xpW = 45.0;
 
     InputDecoration _deco(String hint) => InputDecoration(
           isDense: true,
@@ -1389,7 +1389,7 @@ Widget build(BuildContext context) {
                       controller: xpCtrl,
                       keyboardType: TextInputType.number,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      textAlign: TextAlign.center,
+                      textAlign: TextAlign.left,
                       style: labelStyle,
                       decoration: _deco('0'),
                       onChanged: (_) {
@@ -1541,17 +1541,19 @@ Widget build(BuildContext context) {
           const SizedBox(height: 3),
           const Text('Passé :', style: labelStyle),
           SizedBox(
-            height: fieldH,
+            height: 100, // ← hauteur fixe ou tu peux mettre null pour auto
             child: TextField(
               controller: backgroundCtrl,
               style: labelStyle,
+              maxLines: null,            // ← autorise multi-lignes auto
+              minLines: 3,               // ← hauteur mini visible
+              keyboardType: TextInputType.multiline,
+              textInputAction: TextInputAction.newline,
               decoration: const InputDecoration(
                 isDense: true,
                 border: OutlineInputBorder(),
               ),
-              onChanged: (_) {
-                _scheduleAutoSave();
-              },
+              onChanged: (_) => _scheduleAutoSave(),
             ),
           ),
         ],
@@ -1614,17 +1616,21 @@ Widget build(BuildContext context) {
                   Positioned(
                     left: 6,
                     right: 6,
-                    top: 6,
+                    top: 30,
                     child: Text(
                       it.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: null,
                       textAlign: TextAlign.center,
+                      softWrap: true,            // ← autorise retour à la ligne
+                      overflow: TextOverflow.visible, // ← rien n'est tronqué           
                       style: const TextStyle(
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: Colors.white,
-                        shadows: [Shadow(color: Colors.black54, blurRadius: 6)],
+                        height: 1.1,             // ← compact mais lisible
+                        shadows: [
+                          Shadow(color: Colors.black54, blurRadius: 6),
+                        ],
                       ),
                     ),
                   ),
@@ -1633,7 +1639,7 @@ Widget build(BuildContext context) {
                   Positioned(top: 6, right: 6, child: _itemBadgeFor(it)),
 
                   // --- points de durabilité centrés en bas ---
-                  if (it.category != 'ARMOR') // ← ne pas afficher pour ARMOR
+                  // ← ne pas afficher pour ARMOR
                     Positioned(
                       left: 0,
                       right: 0,

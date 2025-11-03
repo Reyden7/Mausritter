@@ -378,7 +378,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     const SizedBox(height: 8),
                     TextField(
                       controller: duraCtrl,
-                      enabled: category != 'ARMOR',
+                      enabled: true,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
                         labelText: 'Durabilité max (ex: 3)',
@@ -502,7 +502,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
 
                         final payload = <String, dynamic>{
                           'name': name,
-                          'durability_max': (category == 'ARMOR') ? 0 : durability, // si tu veux ignorer la durabilité des armures
+                          'durability_max': durability, // si tu veux ignorer la durabilité des armures
                           'compatible_slots': selected.toList(),
                           'category': category,
                           'created_by': supa.auth.currentUser!.id,
