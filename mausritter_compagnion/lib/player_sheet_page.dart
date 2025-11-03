@@ -589,7 +589,7 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
         ).showSnackBar(const SnackBar(content: Text('Fiche introuvable.')));
         return;
       }
-      _hydrateFromRow(r); // ← factorise ci-dessous
+      _hydrateFromRow(r); 
       await _loadEquipmentFor(_characterId!);
       return;
     }
@@ -599,31 +599,31 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
         .from('characters')
         .select()
         .eq('owner_id', uid)
-        .order('updated_at', ascending: false) // si tu as ce champ
+        .order('updated_at', ascending: false) 
         .limit(1)
         .maybeSingle();
 
     if (r == null) {
       // 3) aucune fiche → en créer une vierge
       final ins = await supa
-          .from('characters')
-          .insert({
-            'owner_id': uid,
-            'name': '',
-            'background': '',
-            'level': level,
-            'xp': xp,
-            'stats': {
-              // si tu utilises le JSON "stats"
-              'str': {'max': strMax, 'cur': strCur},
-              'dex': {'max': dexMax, 'cur': dexCur},
-              'wil': {'max': wilMax, 'cur': wilCur},
-              'hp': {'max': hpMax, 'cur': hpCur},
-            },
-            'slots': {}, // si ta colonne NOT NULL existe
-          })
-          .select()
-          .single();
+        .from('characters')
+        .insert({
+          'owner_id': uid,
+          'name': '',
+          'background': '',
+          'level': level,
+          'xp': xp,
+          'pepin_cur': pepinCur,               
+          'stats': {
+            'str': {'max': strMax, 'cur': strCur},
+            'dex': {'max': dexMax, 'cur': dexCur},
+            'wil': {'max': wilMax, 'cur': wilCur},
+            'hp' : {'max': hpMax , 'cur': hpCur},
+          },
+          'slots': {},
+        })
+        .select()
+        .single();
 
       _characterId = ins['id'] as String;
       await _prefillFromExample();
@@ -637,30 +637,46 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
   }
 
   void _hydrateFromRow(Map<String, dynamic> r) {
-    _characterId = r['id'] as String;
-    nameCtrl.text = (r['name'] ?? '') as String;
-    backgroundCtrl.text = (r['background'] ?? '') as String;
-    level = (r['level'] ?? 1) as int;
-    levelCtrl.text = '$level';
-    xp = (r['xp'] ?? 0) as int;
-    xpCtrl.text = '$xp';
-    pepinCur = (r['pepin_cur'] ?? 0) as int;
-    pepinCtrl.text = '$pepinCur';
+  _characterId = r['id'] as String;
 
-    final stats = (r['stats'] ?? {}) as Map<String, dynamic>;
+  nameCtrl.text = (r['name'] ?? '') as String;
+  backgroundCtrl.text = (r['background'] ?? '') as String;
+
+  level = (r['level'] ?? 1) as int;
+  levelCtrl.text = '$level';
+  xp = (r['xp'] ?? 0) as int;
+  xpCtrl.text = '$xp';
+
+  // --- Pepins
+  pepinCur = (r['pepin_cur'] ?? 0) as int? ?? 0;
+  pepinCtrl.text = '$pepinCur';
+
+  // --- Stats: JSON > colonnes à plat (fallback)
+  final stats = (r['stats'] ?? {}) as Map<String, dynamic>;
+  if (stats.isNotEmpty) {
     strMax = (stats['str']?['max'] ?? 10) as int;
     strCur = (stats['str']?['cur'] ?? 10) as int;
     dexMax = (stats['dex']?['max'] ?? 10) as int;
     dexCur = (stats['dex']?['cur'] ?? 10) as int;
     wilMax = (stats['wil']?['max'] ?? 10) as int;
     wilCur = (stats['wil']?['cur'] ?? 10) as int;
-    hpMax = (stats['hp']?['max'] ?? 4) as int;
-    hpCur = (stats['hp']?['cur'] ?? 4) as int;
-
-    isDead = (r['is_dead'] as bool?) ?? false; // NEW
-
-    setState(() {});
+    hpMax  = (stats['hp']?['max']  ?? 4)  as int;
+    hpCur  = (stats['hp']?['cur']  ?? 4)  as int;
+  } else {
+    // fallback si ta table a encore des colonnes à plat
+    strMax = (r['str_max'] ?? 10) as int;
+    strCur = (r['str_cur'] ?? 10) as int;
+    dexMax = (r['dex_max'] ?? 10) as int;
+    dexCur = (r['dex_cur'] ?? 10) as int;
+    wilMax = (r['wil_max'] ?? 10) as int;
+    wilCur = (r['wil_cur'] ?? 10) as int;
+    hpMax  = (r['hp_max']  ?? 4)  as int;
+    hpCur  = (r['hp_cur']  ?? 4)  as int;
   }
+
+  isDead = (r['is_dead'] as bool?) ?? false;
+  setState(() {});
+}
 
   Future<void> _loadEquipmentFor(String characterId) async {
     final eq = await supa
@@ -711,7 +727,7 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
 
   bool _isLoading = false;
 
-  Future<String?> _ensureCharacterId() async {
+    Future<String?> _ensureCharacterId() async {
     if (_characterId != null) return _characterId;
     final uid = supa.auth.currentUser?.id;
     if (uid == null) return null;
@@ -731,6 +747,7 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
         return _characterId;
       }
 
+      // ✅ Création initiale cohérente avec `stats` + `pepin_cur`
       final ins = await supa
           .from('characters')
           .insert({
@@ -739,15 +756,14 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
             'background': '',
             'level': level,
             'xp': xp,
-            'str_cur': strCur,
-            'str_max': strMax,
-            'dex_cur': dexCur,
-            'dex_max': dexMax,
-            'wil_cur': wilCur,
-            'wil_max': wilMax,
-            'hp_cur': hpCur,
-            'hp_max': hpMax,
-            'pepin_cur': 0,
+            'pepin_cur': pepinCur,
+            'stats': {
+              'str': {'max': strMax, 'cur': strCur},
+              'dex': {'max': dexMax, 'cur': dexCur},
+              'wil': {'max': wilMax, 'cur': wilCur},
+              'hp' : {'max': hpMax , 'cur': hpCur },
+            },
+            'slots': {},
           })
           .select()
           .single();
@@ -761,86 +777,80 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
   }
 
   Future<void> _saveCharacter({
-    bool force = false,
-    bool showFeedback = false,
-  }) async {
-    if (!mounted) return;
+  bool force = false,
+  bool showFeedback = false,
+}) async {
+  if (!mounted) return;
 
-    _saveTimer?.cancel();
-    final now = DateTime.now();
-    if (!force &&
-        now.difference(_lastSave) < const Duration(milliseconds: 400)) {
-      return;
+  _saveTimer?.cancel();
+  final now = DateTime.now();
+  if (!force && now.difference(_lastSave) < const Duration(milliseconds: 400)) {
+    return;
+  }
+  _lastSave = now;
+
+  final id = await _ensureCharacterId();
+  if (id == null) {
+    if (showFeedback) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Impossible d’identifier l’utilisateur.')),
+      );
     }
-    _lastSave = now;
+    return;
+  }
 
-    // 🔒 assure l’existence du perso
-    final id = await _ensureCharacterId();
-    if (id == null) {
-      if (showFeedback) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Impossible d’identifier l’utilisateur.'),
-          ),
-        );
+  try {
+    level = int.tryParse(levelCtrl.text.trim()) ?? level;
+    xp    = int.tryParse(xpCtrl.text.trim()) ?? xp;
+
+    // ✅ On sauve TOUT dans le JSON `stats` + `pepin_cur`
+    final payload = {
+      'name': nameCtrl.text.trim(),
+      'background': backgroundCtrl.text.trim(),
+      'level': level,
+      'xp': xp,
+      'pepin_cur': pepinCur,
+      'stats': {
+        'str': {'max': strMax, 'cur': strCur},
+        'dex': {'max': dexMax, 'cur': dexCur},
+        'wil': {'max': wilMax, 'cur': wilCur},
+        'hp' : {'max': hpMax , 'cur': hpCur },
+      },
+    };
+
+    await supa.from('characters').update(payload).eq('id', id);
+
+    // --- items équipés (inchangé)
+    for (final entry in equipment.entries) {
+      final slotDb = _slotToDb(entry.key);
+      final it = entry.value;
+      if (it == null) {
+        await supa.from('character_items').delete().match({
+          'character_id': id,
+          'slot': slotDb,
+        });
+      } else {
+        await supa.from('character_items').upsert({
+          'character_id': id,
+          'slot': slotDb,
+          'item_id': it.id,
+          'durability_used': it.durabilityUsed,
+        }, onConflict: 'character_id,slot');
       }
-      return;
     }
 
-    try {
-      level = int.tryParse(levelCtrl.text.trim()) ?? level;
-      xp = int.tryParse(xpCtrl.text.trim()) ?? xp;
-
-      await supa
-          .from('characters')
-          .update({
-            'name': nameCtrl.text.trim(),
-            'background': backgroundCtrl.text.trim(),
-            'level': level,
-            'xp': xp,
-            'str_max': strMax,
-            'str_cur': strCur,
-            'dex_max': dexMax,
-            'dex_cur': dexCur,
-            'wil_max': wilMax,
-            'wil_cur': wilCur,
-            'hp_max': hpMax,
-            'hp_cur': hpCur,
-            'pepin_cur': pepinCur,
-          })
-          .eq('id', id);
-
-      for (final entry in equipment.entries) {
-        final slotDb = _slotToDb(entry.key);
-        final it = entry.value;
-        if (it == null) {
-          await supa.from('character_items').delete().match({
-            'character_id': id,
-            'slot': slotDb,
-          });
-        } else {
-          await supa.from('character_items').upsert({
-            'character_id': id,
-            'slot': slotDb,
-            'item_id': it.id,
-            'durability_used': it.durabilityUsed,
-          }, onConflict: 'character_id,slot');
-        }
-      }
-
-      if (showFeedback) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Fiche enregistrée ✅')));
-      }
-    } catch (e) {
-      if (showFeedback) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erreur à l’enregistrement : $e')),
-        );
-      }
+    if (showFeedback) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Fiche enregistrée ✅')));
+    }
+  } catch (e) {
+    if (showFeedback) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Erreur à l’enregistrement : $e')));
     }
   }
+}
+
 
   Future<void> _killMouse() async {
     if (_characterId == null) return;
@@ -1474,6 +1484,7 @@ Widget build(BuildContext context) {
               strMax = m;
               strCur = c;
             });
+            
           }),
           line('DEX :', dexMax, dexCur, (m, c) {
             setState(() {
@@ -1493,18 +1504,18 @@ Widget build(BuildContext context) {
               hpCur = c;
             });
           }),
-          const SizedBox(height: 2),
+          const SizedBox(height: 3),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text('Pépins : ', style: labelStyle),
               SizedBox(
-                width: 48,
+                width: 60,
                 height: fieldH,
                 child: TextField(
                   controller: pepinCtrl,                // ← NEW
                   keyboardType: TextInputType.number,
-                  textAlign: TextAlign.center,
+                  textAlign: TextAlign.left,
                   style: labelStyle,
                   decoration: const InputDecoration(
                     isDense: true,
@@ -1513,7 +1524,7 @@ Widget build(BuildContext context) {
                   onChanged: (v) {
                     final only = v.replaceAll(RegExp(r'[^0-9]'), '');
                     final val = int.tryParse(only) ?? pepinCur;
-                    pepinCur = val.clamp(0, 250);       // ← bornes UI
+                    pepinCur = val.clamp(0, 1000);       
                     if (pepinCtrl.text != '$pepinCur') {
                       pepinCtrl.text = '$pepinCur';
                       pepinCtrl.selection = TextSelection.fromPosition(
@@ -1524,7 +1535,7 @@ Widget build(BuildContext context) {
                   },
                 ),
               ),
-              const Text(' / 250', style: labelStyle),
+              const Text(' / 1000', style: labelStyle),
             ],
           ),
           const SizedBox(height: 3),
