@@ -359,35 +359,79 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
   return [];
 }
 
-  // ------- Sélecteur d’items filtrés par slot + déséquipement -------
-  Future<void> _pickItemForSlot(SlotType slot) async {
-    final tag = slotTag(slot);
+  // ------- Sélecteur d’items filtrés par slot + recherche -------
+Future<void> _pickItemForSlot(SlotType slot) async {
+  final tag = slotTag(slot);
 
-    try {
-      final rows = await supa
-          .from('items')
-          .select(
-            'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed,two_body,pack_size,description',
-          )
-          .contains('compatible_slots', [tag])
-          .order('name', ascending: true, nullsFirst: false);
+  // Requête serveur avec filtre texte (nom + description)
+  Future<List<dynamic>> fetch(String q) async {
+    var req = supa
+        .from('items')
+        .select(
+          'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed,two_body,pack_size,description',
+        )
+        .contains('compatible_slots', [tag]);
 
-      final chosen = await showModalBottomSheet<Map<String, dynamic>>(
-        context: context,
-        isScrollControlled: true,
-        builder: (ctx) => SafeArea(
-          child: DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.7,
-            maxChildSize: 0.95,
-            minChildSize: 0.4,
-            builder: (_, ctl) => Column(
+    final s = q.trim();
+    if (s.isNotEmpty) {
+      req = req.or('name.ilike.%$s%,description.ilike.%$s%');
+    }
+    return await req.order('name', ascending: true);
+  }
+
+  // Charge initial (sans filtre)
+  List<dynamic> rows = await fetch('');
+  if (!mounted) return;
+
+  // ----- BottomSheet avec barre de recherche -----
+  final chosen = await showModalBottomSheet<Map<String, dynamic>>(
+    context: context,
+    isScrollControlled: true,
+    builder: (ctx) {
+      final searchCtrl = TextEditingController();
+      Timer? deb;
+
+      return SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.85,
+          maxChildSize: 0.95,
+          minChildSize: 0.6,
+          builder: (_, ctl) => StatefulBuilder(
+            builder: (ctx, setS) => Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    'Choisir un item – ${slotLabel(slot)}',
-                    style: Theme.of(ctx).textTheme.titleMedium,
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                  child: TextField(
+                    controller: searchCtrl,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      hintText: 'Rechercher un item…',
+                      isDense: true,
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: (searchCtrl.text.isEmpty)
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () async {
+                                searchCtrl.clear();
+                                rows = await fetch('');
+                                if (ctx.mounted) setS(() {});
+                              },
+                            ),
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (v) {
+                      deb?.cancel();
+                      deb = Timer(const Duration(milliseconds: 250), () async {
+                        rows = await fetch(v);
+                        if (ctx.mounted) setS(() {});
+                      });
+                    },
+                    onSubmitted: (v) async {
+                      rows = await fetch(v);
+                      if (ctx.mounted) setS(() {});
+                    },
                   ),
                 ),
                 const Divider(height: 1),
@@ -398,6 +442,7 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
                     itemBuilder: (_, i) {
                       final r = rows[i] as Map<String, dynamic>;
                       final twoH = (r['two_handed'] as bool?) ?? false;
+
                       return ListTile(
                         leading: (r['image_url'] != null)
                             ? ClipRRect(
@@ -412,8 +457,7 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
                             : const Icon(Icons.inventory_2_outlined),
                         title: Text(r['name'] ?? ''),
                         subtitle: Text(
-                          'Durabilité ${r['durability_max'] ?? 3}'
-                          '${twoH ? ' • 2 mains' : ''}',
+                          'Durabilité ${r['durability_max'] ?? 3}${twoH ? ' • 2 mains' : ''}',
                         ),
                         onTap: () => Navigator.pop(ctx, r),
                       );
@@ -425,131 +469,100 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
           ),
         ),
       );
+    },
+  );
 
-      if (chosen == null) return;
+  if (chosen == null) return;
 
-      final equipped = EquippedItem(
-        id: chosen['id'].toString(),
-        name: chosen['name'] ?? 'Item',
-        description: chosen['description'] as String?,
-        imageUrl: chosen['image_url'] as String?,
-        durabilityMax: (chosen['durability_max'] as int?) ?? 3,
-        durabilityUsed: 0,
-        category: (chosen['category'] as String?) ?? 'OTHER',
-        damage: _stringOrNull(chosen['damage']),
-        defense: (chosen['defense'] is int)
-            ? chosen['defense'] as int
-            : int.tryParse('${chosen['defense'] ?? ''}'),
-        two_handed: (chosen['two_handed'] as bool?) ?? false,
-        two_body: (chosen['two_body'] as bool?) ?? false,
-        packSize: (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1,
-      );
+  // ----- Suite inchangée : création de l’EquippedItem + placement -----
+  final equipped = EquippedItem(
+    id: chosen['id'].toString(),
+    name: chosen['name'] ?? 'Item',
+    description: chosen['description'] as String?,
+    imageUrl: chosen['image_url'] as String?,
+    durabilityMax: (chosen['durability_max'] as int?) ?? 3,
+    durabilityUsed: 0,
+    category: (chosen['category'] as String?) ?? 'OTHER',
+    damage: _stringOrNull(chosen['damage']),
+    defense: (chosen['defense'] is int)
+        ? chosen['defense'] as int
+        : int.tryParse('${chosen['defense'] ?? ''}'),
+    two_handed: (chosen['two_handed'] as bool?) ?? false,
+    two_body: (chosen['two_body'] as bool?) ?? false,
+    packSize: (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1,
+  );
 
-      
-      // --- GESTION DES OBJETS VOLUMINEUX (PACK) ---
-      
+  // --- GESTION DES OBJETS VOLUMINEUX (PACK) ---
+  if (slotTag(slot) == 'PACK') {
+    final int packSize = equipped.packSize;
+    if (packSize > 1) {
+      const order = [
+        SlotType.pack1, SlotType.pack2, SlotType.pack3,
+        SlotType.pack4, SlotType.pack5, SlotType.pack6,
+      ];
+      final start = order.indexOf(slot);
+      if (start < 0) return;
 
-      if (slotTag(slot) == 'PACK') {
-        final int packSize = (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1;
-        if (packSize > 1) {
-        // ordre fixe des slots PACK
-        const order = [
-          SlotType.pack1, SlotType.pack2, SlotType.pack3,
-          SlotType.pack4, SlotType.pack5, SlotType.pack6,
-        ];
-        final start = order.indexOf(slot);
-        if (start < 0) return; // sécurité
-
-        // ⚠️ Ici le bug fréquent : utiliser < et PAS <=
-        final List<SlotType> need = [];
-        for (int i = 0; i < packSize; i++) {
-          final idx = start + i;
-          if (idx >= order.length) {
-            // dépassement → pas assez de place
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Pas assez de place dans l’inventaire.')),
-            );
-            return;
-          }
-          need.add(order[idx]);
-        }
-        // vérifie que toutes les cases sont libres
-        final bool allFree = need.every((s) => equipment[s] == null);
-        if (!allFree) {
+      final need = <SlotType>[];
+      for (int i = 0; i < packSize; i++) {
+        final idx = start + i;
+        if (idx >= order.length) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Fais de la place : objet trop volumineux.')),
+            const SnackBar(content: Text('Pas assez de place dans l’inventaire.')),
           );
           return;
         }
-        // pose l’objet sur exactement packSize cases
-        setState(() {
-          for (final s in need) {
-            equipment[s] = equipped;
-          }
-        });
-
-        // sauvegarde chaque case en BDD
-        final id = _characterId;
-        if (id != null) {
-          for (final s in need) {
-            await supa.from('character_items').upsert({
-              'character_id': id,
-              'slot': _slotToDb(s),
-              'item_id': equipped.id,
-              'durability_used': equipped.durabilityUsed,
-            }, onConflict: 'character_id,slot');
-          }
-        }
-
-        // gestion de la durabilité : une seule valeur répliquée
-        await _updateDurability(slot, 0);
-        return; // important : on a déjà tout fait
-        }
+        need.add(order[idx]);
       }
-
-
-
+      final allFree = need.every((s) => equipment[s] == null);
+      if (!allFree) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fais de la place : objet trop volumineux.')),
+        );
+        return;
+      }
       setState(() {
-        // place dans le slot cliqué
-        equipment[slot] = equipped;
-
-        // 2 mains si slot patte
-        if (_isPaw(slot) &&
-            equipped.category == 'WEAPON' &&
-            equipped.two_handed) {
-          equipment[_otherPaw(slot)] = equipped;
+        for (final s in need) {
+          equipment[s] = equipped;
         }
-
-        // 2 corps si slot body
-        if (_isBody(slot) &&
-            equipped.category == 'ARMOR' &&
-            equipped.two_body) {
-          equipment[_otherBody(slot)] = equipped;
-        }
-
-        
       });
-
-      
-
-
-      await _saveCharacter();
-
-      // init durabilité pour tous les slots impliqués
+      final id = _characterId;
+      if (id != null) {
+        for (final s in need) {
+          await supa.from('character_items').upsert({
+            'character_id': id,
+            'slot': _slotToDb(s),
+            'item_id': equipped.id,
+            'durability_used': equipped.durabilityUsed,
+          }, onConflict: 'character_id,slot');
+        }
+      }
       await _updateDurability(slot, 0);
-      if (_isPaw(slot) && equipped.two_handed) {
-        await _updateDurability(_otherPaw(slot), 0);
-      }
-      if (_isBody(slot) && equipped.two_body) {
-        await _updateDurability(_otherBody(slot), 0);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Erreur sélection item: $e')));
+      return;
     }
   }
+
+  setState(() {
+    equipment[slot] = equipped;
+    if (_isPaw(slot) && equipped.category == 'WEAPON' && equipped.two_handed) {
+      equipment[_otherPaw(slot)] = equipped;
+    }
+    if (_isBody(slot) && equipped.category == 'ARMOR' && equipped.two_body) {
+      equipment[_otherBody(slot)] = equipped;
+    }
+  });
+
+  await _saveCharacter();
+
+  await _updateDurability(slot, 0);
+  if (_isPaw(slot) && equipped.two_handed) {
+    await _updateDurability(_otherPaw(slot), 0);
+  }
+  if (_isBody(slot) && equipped.two_body) {
+    await _updateDurability(_otherBody(slot), 0);
+  }
+}
+
 
   void _unequip(SlotType slot) {
     final it = equipment[slot];

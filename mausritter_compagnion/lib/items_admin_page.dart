@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -13,6 +14,9 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
   final supa = Supabase.instance.client;
   bool loading = true;
   List<dynamic> items = [];
+  final _searchCtrl = TextEditingController();
+  Timer? _searchDebounce;
+  String _query ='';
 
   static const bucket = 'items'; // bucket Supabase Storage (public conseillé)
 
@@ -50,14 +54,30 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
     _refresh();
   }
 
-  Future<void> _refresh() async {
-    setState(() => loading = true);
-    final data = await supa.from('items').select().order('name', ascending: true, nullsFirst: false);
-    setState(() {
-      items = data;
-      loading = false;
-    });
+  void dispose() {
+  _searchDebounce?.cancel();
+  _searchCtrl.dispose();
+  super.dispose();
+}
+
+  Future<void> _refresh({String q = ''}) async {
+  setState(() {
+    loading = true;
+    _query = q.trim();
+  });
+
+  var req = supa.from('items').select();
+  if (_query.isNotEmpty) {
+    req = req.or('name.ilike.%$_query%,description.ilike.%$_query%');
   }
+  // tri alpha
+  final data = await req.order('name', ascending: true);
+
+  setState(() {
+    items = data;
+    loading = false;
+  });
+}
 
   // ====== Choix Galerie / Appareil photo ======
   Future<ImageSource?> _chooseSource(BuildContext context) async {
@@ -643,8 +663,40 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
       appBar: AppBar(
         title: const Text('Gestion des items (MJ)'),
         actions: [
-          IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh)),
+          IconButton(onPressed: () => _refresh(q: _query), icon: const Icon(Icons.refresh)),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(52),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+            child: TextField(
+              controller: _searchCtrl,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: 'Rechercher un item (nom, description)…',
+                isDense: true,
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: (_query.isEmpty)
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          _refresh(q: '');
+                        },
+                      ),
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (v) {
+                _searchDebounce?.cancel();
+                _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+                  _refresh(q: v);
+                });
+              },
+              onSubmitted: (v) => _refresh(q: v),
+            ),
+          ),
+        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _createOrEdit(),
