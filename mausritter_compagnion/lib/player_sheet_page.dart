@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:collection/collection.dart';
 
 /// Types de slots Mausritter
 enum SlotType {
@@ -55,6 +56,92 @@ String slotTag(SlotType s) {
     default:
       return 'PACK';
   }
+}
+
+
+// --- Grille PACK joueur: 2 lignes × 3 colonnes (indices 0..5)
+// index -> (row, col) et inverse
+int _packRows = 2, _packCols = 3;
+
+({int r,int c}) _idxToRC(int idx) => (r: idx ~/ _packCols, c: idx % _packCols);
+int _rcToIdx(int r, int c) => r * _packCols + c;
+
+// Normalise une shape (liste d’indices 0..5) en coords relative (origine top-left)
+List<({int r,int c})> _normalizeShape(List<int> shape) {
+  final coords = shape.map(_idxToRC).toList();
+  final minR = coords.map((e) => e.r).reduce((a,b) => a < b ? a : b);
+  final minC = coords.map((e) => e.c).reduce((a,b) => a < b ? a : b);
+  return coords.map((e) => (r: e.r - minR, c: e.c - minC)).toList();
+}
+
+// Rotation 0/90/180/270 autour de la bbox de la shape (pas du plateau)
+List<({int r,int c})> _rotateShape(List<({int r,int c})> norm, int deg) {
+  // bbox de la shape normalisée
+  final H = norm.map((e) => e.r).reduce((a,b) => a>b?a:b) + 1;
+  final W = norm.map((e) => e.c).reduce((a,b) => a>b?a:b) + 1;
+
+  List<({int r,int c})> rot;
+  switch (deg % 360) {
+    case 0:
+      rot = norm;
+      break;
+    case 90:
+      // (r,c) -> (c, H-1-r) ; bbox devient (W,H)
+      rot = norm.map((e) => (r: e.c, c: H - 1 - e.r)).toList();
+      break;
+    case 180:
+      rot = norm.map((e) => (r: H - 1 - e.r, c: W - 1 - e.c)).toList();
+      break;
+    case 270:
+      rot = norm.map((e) => (r: W - 1 - e.c, c: e.r)).toList();
+      break;
+    default:
+      rot = norm;
+  }
+  // renormalise (origine top-left)
+  final minR = rot.map((e) => e.r).reduce((a,b) => a < b ? a : b);
+  final minC = rot.map((e) => e.c).reduce((a,b) => a < b ? a : b);
+  return rot.map((e) => (r: e.r - minR, c: e.c - minC)).toList();
+}
+
+// Génère toutes les poses possibles (translations) de la shape (après rotation) dans la grille 2×3
+List<List<int>> _translateAllFits(List<({int r,int c})> rot) {
+  final H = rot.map((e) => e.r).reduce((a,b) => a>b?a:b) + 1;
+  final W = rot.map((e) => e.c).reduce((a,b) => a>b?a:b) + 1;
+
+  final maxDr = _packRows - H;
+  final maxDc = _packCols - W;
+  if (maxDr < 0 || maxDc < 0) return const [];
+
+  final placements = <List<int>>[];
+  for (var dr = 0; dr <= maxDr; dr++) {
+    for (var dc = 0; dc <= maxDc; dc++) {
+      final idxs = rot.map((e) => _rcToIdx(e.r + dr, e.c + dc)).toList()..sort();
+      // évite doublons
+      if (!placements.any((p) => p.length == idxs.length && ListEquality().equals(p, idxs))) {
+        placements.add(idxs);
+      }
+    }
+  }
+  return placements;
+}
+
+// Toutes les poses (avec rotations si autorisées)
+List<List<int>> allPackPlacements(List<int> shape, {required bool canRotate}) {
+  if (shape.isEmpty) return const [];
+  final norm = _normalizeShape(shape);
+  final degs = canRotate ? const [0,90,180,270] : const [0];
+  final out = <List<int>>[];
+  for (final d in degs) {
+    final rot = _rotateShape(norm, d);
+    out.addAll(_translateAllFits(rot));
+  }
+  // unique
+  final unique = <String, List<int>>{};
+  for (final p in out) {
+    unique[p.join(',')] = p;
+  }
+  return unique.values.toList();
 }
 
 /// Modèle simple d’item équipé côté UI
@@ -359,16 +446,18 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
   return [];
 }
 
+
+
   // ------- Sélecteur d’items filtrés par slot + recherche -------
 Future<void> _pickItemForSlot(SlotType slot) async {
   final tag = slotTag(slot);
-
+  
   // Requête serveur avec filtre texte (nom + description)
   Future<List<dynamic>> fetch(String q) async {
     var req = supa
         .from('items')
         .select(
-          'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed,two_body,pack_size,description',
+          'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed,two_body,pack_size,description,pack_shape,pack_can_rotate',
         )
         .contains('compatible_slots', [tag]);
 
@@ -492,55 +581,102 @@ Future<void> _pickItemForSlot(SlotType slot) async {
     packSize: (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1,
   );
 
-  // --- GESTION DES OBJETS VOLUMINEUX (PACK) ---
-  if (slotTag(slot) == 'PACK') {
-    final int packSize = equipped.packSize;
-    if (packSize > 1) {
-      const order = [
-        SlotType.pack1, SlotType.pack2, SlotType.pack3,
-        SlotType.pack4, SlotType.pack5, SlotType.pack6,
-      ];
-      final start = order.indexOf(slot);
-      if (start < 0) return;
+  // --- GESTION PACK AVEC SHAPE + ROTATION ---
+if (slotTag(slot) == 'PACK') {
+  // données issues de la fiche item
+  final int packSize = (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1;
+  final List<int> shape = ((chosen['pack_shape'] as List?)
+          ?.map((e) => int.tryParse('$e') ?? -1)
+          .where((i) => i >= 0 && i <= 5)
+          .toList()) ??
+      <int>[];
+  final bool canRotate = (chosen['pack_can_rotate'] as bool?) ?? true;
 
-      final need = <SlotType>[];
-      for (int i = 0; i < packSize; i++) {
-        final idx = start + i;
-        if (idx >= order.length) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Pas assez de place dans l’inventaire.')),
-          );
-          return;
-        }
-        need.add(order[idx]);
-      }
-      final allFree = need.every((s) => equipment[s] == null);
-      if (!allFree) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Fais de la place : objet trop volumineux.')),
-        );
-        return;
-      }
-      setState(() {
-        for (final s in need) {
-          equipment[s] = equipped;
-        }
-      });
-      final id = _characterId;
-      if (id != null) {
-        for (final s in need) {
-          await supa.from('character_items').upsert({
-            'character_id': id,
-            'slot': _slotToDb(s),
-            'item_id': equipped.id,
-            'durability_used': equipped.durabilityUsed,
-          }, onConflict: 'character_id,slot');
-        }
-      }
-      await _updateDurability(slot, 0);
+  // Cas simple : taille 1 → on pose juste sur la case cliquée si libre
+  if (packSize <= 1 || shape.isEmpty) {
+    if (equipment[slot] != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Case occupée.')),
+      );
       return;
     }
+    setState(() => equipment[slot] = equipped);
+
+    final id = _characterId;
+    if (id != null) {
+      await supa.from('character_items').upsert({
+        'character_id': id,
+        'slot': _slotToDb(slot),
+        'item_id': equipped.id,
+        'durability_used': equipped.durabilityUsed,
+      }, onConflict: 'character_id,slot');
+    }
+    await _updateDurability(slot, 0);
+    return;
   }
+
+  // Grille pack dans l’ordre fixe 0..5
+  const order = [
+    SlotType.pack1, SlotType.pack2, SlotType.pack3,
+    SlotType.pack4, SlotType.pack5, SlotType.pack6,
+  ];
+  final clickedIdx = order.indexOf(slot); // 0..5
+
+  // Toutes les poses valides (rotations incluses si autorisées)
+  final placements = allPackPlacements(shape, canRotate: canRotate);
+
+  // On privilégie les poses qui INCLUENT la case cliquée
+  final preferred = <List<int>>[
+    ...placements.where((p) => p.contains(clickedIdx)),
+    ...placements.where((p) => !p.contains(clickedIdx)),
+  ];
+
+  bool isFree(List<int> idxs) {
+    for (final i in idxs) {
+      if (equipment[order[i]] != null) return false;
+    }
+    return true;
+  }
+
+  List<int>? chosenPlacement;
+  for (final p in preferred) {
+    if (p.length == packSize && isFree(p)) {
+      chosenPlacement = p;
+      break;
+    }
+  }
+
+  if (chosenPlacement == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Pas assez de place dans l’inventaire.')),
+    );
+    return;
+  }
+
+  // Pose effective : toutes les cases référencent le même EquippedItem
+  setState(() {
+    for (final i in chosenPlacement!) {
+      equipment[order[i]] = equipped;
+    }
+  });
+
+  // Sauvegarde BDD : une ligne par case PACK occupée
+  final id = _characterId;
+  if (id != null) {
+    for (final i in chosenPlacement) {
+      await supa.from('character_items').upsert({
+        'character_id': id,
+        'slot': _slotToDb(order[i]),
+        'item_id': equipped.id,
+        'durability_used': equipped.durabilityUsed,
+      }, onConflict: 'character_id,slot');
+    }
+  }
+
+  // Durabilité miroir
+  await _updateDurability(slot, 0);
+  return;
+}
 
   setState(() {
     equipment[slot] = equipped;
@@ -705,7 +841,7 @@ Future<void> _pickItemForSlot(SlotType slot) async {
     final eq = await supa
         .from('character_items')
         .select(
-          'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense,two_handed, two_body, pack_size,description)',
+          'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense,two_handed, two_body, pack_size,description,pack_shape,pack_can_rotate)',
         )
         .eq('character_id', characterId);
 
