@@ -345,6 +345,204 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
   }
 }
 
+
+class _PackPlacementDialog extends StatefulWidget {
+  final List<int> shape;           // indices 0..5 (forme de l'item)
+  final bool canRotate;            // si on autorise 90/180/270
+  final Set<int> occupied;         // cases déjà occupées (0..5)
+  final int preferredIndex;        // index privilégié (case cliquée)
+
+  const _PackPlacementDialog({
+    required this.shape,
+    required this.canRotate,
+    required this.occupied,
+    required this.preferredIndex,
+  });
+
+  @override
+  State<_PackPlacementDialog> createState() => _PackPlacementDialogState();
+}
+
+class _PackPlacementDialogState extends State<_PackPlacementDialog> {
+  final List<int> _angles = const [0, 90, 180, 270];
+  int _angleIdx = 0; // pointeur dans _angles
+
+  // NEW: preview courant (set d’indices 0..5) et dernière case pressée
+  Set<int>? _preview;
+  int? _lastPressed;
+
+  List<({int r,int c})> get _norm => _normalizeShape(widget.shape);
+  List<({int r,int c})> get _rot =>
+      _rotateShape(_norm, _angles[_angleIdx % _angles.length]);
+
+  // renvoie toutes les traductions possibles (listes d’indices 0..5) pour l’angle courant,
+  // EXCLUANT les placements qui chevauchent une case occupée
+  List<List<int>> _validPlacements() {
+    final fits = <List<int>>[];
+    final H = _rot.map((e) => e.r).reduce((a,b) => a>b?a:b) + 1;
+    final W = _rot.map((e) => e.c).reduce((a,b) => a>b?a:b) + 1;
+    final maxDr = _packRows - H;   // ← utilise bien les globals 2×3
+    final maxDc = _packCols - W;
+    if (maxDr < 0 || maxDc < 0) return const [];
+
+    for (var dr = 0; dr <= maxDr; dr++) {
+      for (var dc = 0; dc <= maxDc; dc++) {
+        final idxs = _rot.map((e) => _rcToIdx(e.r + dr, e.c + dc)).toList()..sort();
+        final collides = idxs.any(widget.occupied.contains);
+        if (!collides) fits.add(idxs);
+      }
+    }
+    // unique
+    final seen = <String>{};
+    final uniq = <List<int>>[];
+    for (final p in fits) {
+      final k = p.join(',');
+      if (seen.add(k)) uniq.add(p);
+    }
+    return uniq;
+  }
+
+  void _rotateLeft() {
+    if (!widget.canRotate) return;
+    final n = _angles.length;
+    setState(() => _angleIdx = (_angleIdx - 1 + n) % n);
+  }
+
+  void _rotateRight() {
+    if (!widget.canRotate) return;
+    setState(() => _angleIdx = (_angleIdx + 1) % _angles.length);
+  }
+
+  void _setPreviewForIndex(int idx, Map<int, List<int>> validTargets) {
+    final p = validTargets[idx];
+    setState(() => _preview = p == null ? null : p.toSet());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final placements = _validPlacements();
+
+    // idx -> 1er placement qui inclut cette case
+    final validTargets = <int, List<int>>{};
+    for (final p in placements) {
+      for (final idx in p) {
+        validTargets.putIfAbsent(idx, () => p);
+      }
+    }
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Text('Placer l’objet', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Spacer(),
+                IconButton(
+                  onPressed: widget.canRotate ? _rotateLeft : null,
+                  icon: const Icon(Icons.rotate_left),
+                  tooltip: 'Pivoter -90°',
+                ),
+                IconButton(
+                  onPressed: widget.canRotate ? _rotateRight : null,
+                  icon: const Icon(Icons.rotate_right),
+                  tooltip: 'Pivoter +90°',
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: 200,
+              child: AspectRatio(
+                aspectRatio: _packCols / _packRows, // 3/2
+                child: GridView.builder(
+                  padding: EdgeInsets.zero,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _packRows * _packCols, // 6
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3, mainAxisSpacing: 6, crossAxisSpacing: 6,
+                  ),
+                  itemBuilder: (_, i) {
+                    final isOcc = widget.occupied.contains(i);
+                    final canPlaceHere = validTargets.containsKey(i);
+                    final isPreferred = (i == widget.preferredIndex);
+                    final inPreview = _preview?.contains(i) ?? false;
+
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (_) {
+                        _lastPressed = i;
+                        if (!isOcc && canPlaceHere) {
+                          _setPreviewForIndex(i, validTargets);
+                        } else {
+                          setState(() => _preview = null);
+                        }
+                      },
+                      onTapCancel: () => setState(() => _preview = null),
+                      onTapUp: (_) => setState(() => _preview = null),
+                      onTap: (!isOcc && canPlaceHere)
+                          ? () => Navigator.pop(context, validTargets[i])
+                          : null,
+                      onDoubleTap: widget.canRotate ? _rotateRight : null,
+                      onHorizontalDragEnd: widget.canRotate ? (details) {
+                        final v = details.primaryVelocity ?? 0;
+                        if (v.abs() < 50) return;
+                        if (v > 0) { _rotateRight(); } else { _rotateLeft(); }
+                        if (_lastPressed != null && !isOcc && canPlaceHere) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) _setPreviewForIndex(_lastPressed!, validTargets);
+                          });
+                        }
+                      } : null,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 100),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: isPreferred ? Colors.blueAccent : Colors.black54,
+                            width: isPreferred ? 2.2 : 1.2,
+                          ),
+                          borderRadius: BorderRadius.circular(6),
+                          color: isOcc
+                              ? Colors.red.withOpacity(0.25)
+                              : inPreview
+                                  ? Colors.blue.withOpacity(0.28)
+                                  : canPlaceHere
+                                      ? Colors.green.withOpacity(0.22)
+                                      : Colors.grey.withOpacity(0.10),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${i+1}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: isOcc ? Colors.red.shade800 : Colors.black87,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (placements.isEmpty)
+              const Text('Aucun placement possible. Libère de la place ou pivote.'),
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Annuler'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
 class _PlayerSheetPageState extends State<PlayerSheetPage> {
   Timer? _saveTimer;
   DateTime _lastSave = DateTime.fromMillisecondsSinceEpoch(0);
@@ -563,6 +761,107 @@ Future<void> _pickItemForSlot(SlotType slot) async {
 
   if (chosen == null) return;
 
+  // --- GESTION PACK AVEC CHOIX MANUEL (rotation + position) ---
+if (slotTag(slot) == 'PACK') {
+  final int packSize = (chosen['pack_size'] as int?)?.clamp(1,6) ?? 1;
+
+  if (packSize > 1) {
+    // 1) récupérer la shape ; fallback linéaire [0..packSize-1] si absente
+    List<int> packShape = ((chosen['pack_shape'] as List?) ?? const [])
+        .map((e) => int.tryParse(e.toString()) ?? -1)
+        .where((i) => i >= 0 && i <= 5)
+        .toList();
+    if (packShape.length != packSize) {
+      packShape = List<int>.generate(packSize, (i) => i); // fallback simple
+    }
+
+    final bool canRotate = (chosen['pack_can_rotate'] as bool?) ?? true;
+
+    // 2) construire l’occupation actuelle des 6 cases
+    const order = [
+      SlotType.pack1, SlotType.pack2, SlotType.pack3,
+      SlotType.pack4, SlotType.pack5, SlotType.pack6,
+    ];
+    final occupied = <int>{};
+    for (int i = 0; i < order.length; i++) {
+      final s = order[i];
+      if (equipment[s] != null) occupied.add(i);
+    }
+
+    // 3) case préférée = celle sur laquelle l’utilisateur a cliqué
+    final preferredIndex = order.indexOf(slot);
+
+    // 4) ouvrir le sélecteur
+    final chosenIdxs = await showModalBottomSheet<List<int>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _PackPlacementDialog(
+        shape: packShape,
+        canRotate: canRotate,
+        occupied: occupied,
+        preferredIndex: preferredIndex,
+      ),
+    );
+
+    if (chosenIdxs == null || chosenIdxs.isEmpty) return; // annulé
+
+    // 5) on a la liste d’indices 0..5 retenue → map vers SlotType
+    final chosenSlots = chosenIdxs.map((i) => order[i]).toList();
+
+    // 6) construire l'EquippedItem et poser sur ces slots
+    final equipped = EquippedItem(
+      id: chosen['id'].toString(),
+      name: chosen['name'] ?? 'Item',
+      description: chosen['description'] as String?,
+      imageUrl: chosen['image_url'] as String?,
+      durabilityMax: (chosen['durability_max'] as int?) ?? 3,
+      durabilityUsed: 0,
+      category: (chosen['category'] as String?) ?? 'OTHER',
+      damage: _stringOrNull(chosen['damage']),
+      defense: (chosen['defense'] is int)
+          ? chosen['defense'] as int
+          : int.tryParse('${chosen['defense'] ?? ''}'),
+      two_handed: (chosen['two_handed'] as bool?) ?? false,
+      two_body: (chosen['two_body'] as bool?) ?? false,
+      packSize: packSize,
+    );
+
+    // si c’est une case PACK simple, refuse si déjà occupée
+    if (slotTag(slot) == 'PACK' && equipment[slot] != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Case occupée. Retire l’objet d’abord.')),
+      );
+      return;
+    }
+
+    // libérer au cas où (rare) des cases qui contiendraient la même id
+    setState(() {
+      for (final s in order) {
+        if (equipment[s]?.id == equipped.id) equipment[s] = null;
+      }
+      for (final s in chosenSlots) {
+        equipment[s] = equipped;
+      }
+    });
+
+    // persistance
+    final id = _characterId;
+    if (id != null) {
+      for (final s in chosenSlots) {
+        await supa.from('character_items').upsert({
+          'character_id': id,
+          'slot': _slotToDb(s),
+          'item_id': equipped.id,
+          'durability_used': equipped.durabilityUsed,
+        }, onConflict: 'character_id,slot');
+      }
+    }
+    await _updateDurability(chosenSlots.first, 0);
+    return; // on ne passe pas à l’auto-placement plus bas
+  }
+}
+
+
   // ----- Suite inchangée : création de l’EquippedItem + placement -----
   final equipped = EquippedItem(
     id: chosen['id'].toString(),
@@ -581,102 +880,7 @@ Future<void> _pickItemForSlot(SlotType slot) async {
     packSize: (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1,
   );
 
-  // --- GESTION PACK AVEC SHAPE + ROTATION ---
-if (slotTag(slot) == 'PACK') {
-  // données issues de la fiche item
-  final int packSize = (chosen['pack_size'] as int?)?.clamp(1, 6) ?? 1;
-  final List<int> shape = ((chosen['pack_shape'] as List?)
-          ?.map((e) => int.tryParse('$e') ?? -1)
-          .where((i) => i >= 0 && i <= 5)
-          .toList()) ??
-      <int>[];
-  final bool canRotate = (chosen['pack_can_rotate'] as bool?) ?? true;
 
-  // Cas simple : taille 1 → on pose juste sur la case cliquée si libre
-  if (packSize <= 1 || shape.isEmpty) {
-    if (equipment[slot] != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Case occupée.')),
-      );
-      return;
-    }
-    setState(() => equipment[slot] = equipped);
-
-    final id = _characterId;
-    if (id != null) {
-      await supa.from('character_items').upsert({
-        'character_id': id,
-        'slot': _slotToDb(slot),
-        'item_id': equipped.id,
-        'durability_used': equipped.durabilityUsed,
-      }, onConflict: 'character_id,slot');
-    }
-    await _updateDurability(slot, 0);
-    return;
-  }
-
-  // Grille pack dans l’ordre fixe 0..5
-  const order = [
-    SlotType.pack1, SlotType.pack2, SlotType.pack3,
-    SlotType.pack4, SlotType.pack5, SlotType.pack6,
-  ];
-  final clickedIdx = order.indexOf(slot); // 0..5
-
-  // Toutes les poses valides (rotations incluses si autorisées)
-  final placements = allPackPlacements(shape, canRotate: canRotate);
-
-  // On privilégie les poses qui INCLUENT la case cliquée
-  final preferred = <List<int>>[
-    ...placements.where((p) => p.contains(clickedIdx)),
-    ...placements.where((p) => !p.contains(clickedIdx)),
-  ];
-
-  bool isFree(List<int> idxs) {
-    for (final i in idxs) {
-      if (equipment[order[i]] != null) return false;
-    }
-    return true;
-  }
-
-  List<int>? chosenPlacement;
-  for (final p in preferred) {
-    if (p.length == packSize && isFree(p)) {
-      chosenPlacement = p;
-      break;
-    }
-  }
-
-  if (chosenPlacement == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Pas assez de place dans l’inventaire.')),
-    );
-    return;
-  }
-
-  // Pose effective : toutes les cases référencent le même EquippedItem
-  setState(() {
-    for (final i in chosenPlacement!) {
-      equipment[order[i]] = equipped;
-    }
-  });
-
-  // Sauvegarde BDD : une ligne par case PACK occupée
-  final id = _characterId;
-  if (id != null) {
-    for (final i in chosenPlacement) {
-      await supa.from('character_items').upsert({
-        'character_id': id,
-        'slot': _slotToDb(order[i]),
-        'item_id': equipped.id,
-        'durability_used': equipped.durabilityUsed,
-      }, onConflict: 'character_id,slot');
-    }
-  }
-
-  // Durabilité miroir
-  await _updateDurability(slot, 0);
-  return;
-}
 
   setState(() {
     equipment[slot] = equipped;

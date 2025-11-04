@@ -301,7 +301,7 @@ List<int> _normalizePackShape(List<dynamic>? raw) {
     String? imageUrl = existing?['image_url'];
     bool twoHanded = (existing?['two_handed'] as bool?) ?? false;
     bool twoBody   = (existing?['two_body']   as bool?) ?? false;
-
+    bool packCanRotate = (existing?['pack_can_rotate'] as bool?) ?? true;
     // NEW: shape PACK 3x2 : indices 0..5
     List<int> packShape = _normalizePackShape(existing?['pack_shape']);
 
@@ -466,7 +466,16 @@ List<int> _normalizePackShape(List<dynamic>? raw) {
                   ),
                 );
               }
-
+              Widget _packRotateSwitch() {
+                final hasPack = selected.contains('PACK');
+                if (!hasPack || packSize <= 1) return const SizedBox.shrink();
+                return SwitchListTile(
+                  title: const Text('Autoriser la rotation'),
+                  value: packCanRotate,
+                  onChanged: (v) => setS(() => packCanRotate = v),
+                  contentPadding: EdgeInsets.zero,
+                );
+              }
               // NEW: Picker visuel 3×2 pour la shape
               Widget _packShapeSection() {
                 final hasPack = selected.contains('PACK');
@@ -580,6 +589,7 @@ List<int> _normalizePackShape(List<dynamic>? raw) {
                     _armorSection(),
                     _packSizeSection(),
                     _packShapeSection(),
+                    _packRotateSwitch(),
 
                     const SizedBox(height: 12),
                     Row(
@@ -677,7 +687,7 @@ List<int> _normalizePackShape(List<dynamic>? raw) {
                           'compatible_slots': selected.toList(),
                           'category': category,
                           'created_by': supa.auth.currentUser!.id,
-
+                          'pack_can_rotate': (selected.contains('PACK') && packSize > 1) ? packCanRotate : true,
                           'damage': category == 'WEAPON'
                               ? (() {
                                   if (damage != null && damage!.isNotEmpty) return damage;
