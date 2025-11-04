@@ -61,6 +61,7 @@ String slotTag(SlotType s) {
 class EquippedItem {
   final String id;
   final String name;
+  final String? description;
   final String? imageUrl;
   final int durabilityMax;
   int durabilityUsed;
@@ -76,6 +77,7 @@ class EquippedItem {
   EquippedItem({
     required this.id,
     required this.name,
+    this.description,
     required this.durabilityMax,
     required this.durabilityUsed,
     this.imageUrl,
@@ -105,6 +107,13 @@ String? _asIdString(dynamic v) {
   if (v is int || v is num) return v.toString();
   return null;
 }
+
+String? _stringOrNull(dynamic v) {
+  if (v == null) return null;
+  final s = v.toString().trim();
+  return s.isEmpty ? null : s;
+}
+
 
 class PlayerSheetPage extends StatefulWidget {
   final String? characterId; // ← nouveau (nullable pour compatibilité)
@@ -358,10 +367,10 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
       final rows = await supa
           .from('items')
           .select(
-            'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed,two_body,pack_size',
+            'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed,two_body,pack_size,description',
           )
           .contains('compatible_slots', [tag])
-          .order('name');
+          .order('name', ascending: true, nullsFirst: false);
 
       final chosen = await showModalBottomSheet<Map<String, dynamic>>(
         context: context,
@@ -422,11 +431,12 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
       final equipped = EquippedItem(
         id: chosen['id'].toString(),
         name: chosen['name'] ?? 'Item',
+        description: chosen['description'] as String?,
         imageUrl: chosen['image_url'] as String?,
         durabilityMax: (chosen['durability_max'] as int?) ?? 3,
         durabilityUsed: 0,
         category: (chosen['category'] as String?) ?? 'OTHER',
-        damage: chosen['damage'] as String?,
+        damage: _stringOrNull(chosen['damage']),
         defense: (chosen['defense'] is int)
             ? chosen['defense'] as int
             : int.tryParse('${chosen['defense'] ?? ''}'),
@@ -682,7 +692,7 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
     final eq = await supa
         .from('character_items')
         .select(
-          'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense,two_handed, two_body, pack_size)',
+          'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense,two_handed, two_body, pack_size,description)',
         )
         .eq('character_id', characterId);
 
@@ -699,11 +709,12 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
       final equipped = EquippedItem(
         id: itemId,
         name: (item['name'] ?? '') as String,
+        description: item['description'] as String?,
         imageUrl: item['image_url'] as String?,
         durabilityMax: (item['durability_max'] as int?) ?? 3,
         durabilityUsed: (e['durability_used'] as int?) ?? 0,
         category: (item['category'] as String?) ?? 'OTHER',
-        damage: item['damage'] as String?,
+        damage: _stringOrNull(item['damage']),
         defense: (item['defense'] is int)
             ? item['defense'] as int
             : int.tryParse('${item['defense'] ?? ''}'),
@@ -1133,7 +1144,31 @@ Widget build(BuildContext context) {
                 child: SizedBox(
                   width: designW,
                   height: designH,
-                  child: _sheetBody(),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // ta fiche
+                      _sheetBody(),
+
+                      // watermark "souris morte" si isDead
+                      if (isDead)
+                        Positioned.fill(
+                          child: IgnorePointer( 
+                            ignoring: true,
+                            child: Center(
+                              child: Opacity(
+                                opacity: 0.85, 
+                                child: Image.asset(
+                                  'assets/icons/icon_souris_morte.png',
+                                  width: designW * 0.80,   // ~80% de la largeur de la fiche
+                                  fit: BoxFit.contain,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -1524,7 +1559,7 @@ Widget build(BuildContext context) {
                   onChanged: (v) {
                     final only = v.replaceAll(RegExp(r'[^0-9]'), '');
                     final val = int.tryParse(only) ?? pepinCur;
-                    pepinCur = val.clamp(0, 1000);       
+                    pepinCur = val.clamp(0, 250);       
                     if (pepinCtrl.text != '$pepinCur') {
                       pepinCtrl.text = '$pepinCur';
                       pepinCtrl.selection = TextSelection.fromPosition(
@@ -1535,7 +1570,7 @@ Widget build(BuildContext context) {
                   },
                 ),
               ),
-              const Text(' / 1000', style: labelStyle),
+              const Text(' / 250', style: labelStyle),
             ],
           ),
           const SizedBox(height: 3),
@@ -1612,6 +1647,43 @@ Widget build(BuildContext context) {
                     ),
                   ),
 
+                  // --- bouton info haut-gauche ---
+                  if ((it.description ?? '').isNotEmpty)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () {
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: Text(it.name),
+                                content: SingleChildScrollView(
+                                  child: Text(
+                                    it.description!,
+                                    textAlign: TextAlign.left,
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: const Text('Fermer'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                          child: const Padding(
+                            padding: EdgeInsets.all(4.0),
+                            child: Icon(Icons.info_outline, size: 18, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ),
+
                   // --- titre centré en haut ---
                   Positioned(
                     left: 6,
@@ -1640,6 +1712,7 @@ Widget build(BuildContext context) {
 
                   // --- points de durabilité centrés en bas ---
                   // ← ne pas afficher pour ARMOR
+                  if (it.category != 'ARMOR' && it.durabilityMax > 0)
                     Positioned(
                       left: 0,
                       right: 0,
@@ -1663,11 +1736,17 @@ Widget build(BuildContext context) {
 
   Widget _itemBadgeFor(EquippedItem it) {
     String? text;
-    if (it.category == 'WEAPON' && (it.damage?.isNotEmpty ?? false)) {
-      text = it.damage; // ex: d6, d6/d8, d10…
+
+    if (it.category == 'WEAPON') {
+      final d = it.damage?.trim();
+      if (d != null && d.isNotEmpty) {
+        // "6" → "d6", garde "d6", "d6/d8", "2d6+1", etc.
+        text = RegExp(r'^\d+$').hasMatch(d) ? 'd$d' : d;
+      }
     } else if (it.category == 'ARMOR' && it.defense != null) {
       text = '${it.defense} DEF';
     }
+
     if (text == null && !it.two_handed) return const SizedBox.shrink();
 
     return Row(
@@ -1705,7 +1784,7 @@ Widget build(BuildContext context) {
     );
   }
 
-  Widget _durabilityDotsForSlot(
+ Widget _durabilityDotsForSlot(
     SlotType slot, {
     required int max,
     required int used,
@@ -1713,18 +1792,18 @@ Widget build(BuildContext context) {
     double size = 14,
     double spacing = 4,
   }) {
-    final total = max.clamp(1, 6);
+    if (max <= 0) return const SizedBox.shrink();  // ← rien à afficher
+
+    final total = max.clamp(1, 6); // 1..6 seulement si max>0
     return Row(
-      mainAxisSize: MainAxisSize.min, // ← centrage serré
+      mainAxisSize: MainAxisSize.min,
       children: List.generate(total, (i) {
         final filled = i < used;
         return GestureDetector(
           onTap: () async {
             final newUsed = (i + 1 == used) ? i : i + 1;
-            setState(
-              () => equipment[slot]!.durabilityUsed = newUsed,
-            ); // UI optimiste
-            await _updateDurability(slot, newUsed); // save DB
+            setState(() => equipment[slot]!.durabilityUsed = newUsed);
+            await _updateDurability(slot, newUsed);
           },
           child: Padding(
             padding: EdgeInsets.only(right: i == total - 1 ? 0 : spacing),

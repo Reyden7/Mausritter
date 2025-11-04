@@ -52,7 +52,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
 
   Future<void> _refresh() async {
     setState(() => loading = true);
-    final data = await supa.from('items').select().order('created_at');
+    final data = await supa.from('items').select().order('name', ascending: true, nullsFirst: false);
     setState(() {
       items = data;
       loading = false;
@@ -158,6 +158,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
     final duraCtrl = TextEditingController(
       text: (existing?['durability_max'] ?? 3).toString(),
     );
+    final descCtrl = TextEditingController(text: existing?['description'] ?? '');
     String category = existing?['category'] ?? 'OTHER';
     final selected = <String>{
       ...(existing?['compatible_slots']?.cast<String>() ?? <String>[]),
@@ -228,34 +229,22 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     ),
                     const SizedBox(height: 6),
 
+                    // ✅ Dropdown des PRÉSETS DE DÉGÂTS (et plus le dropdown de "category")
                     DropdownButtonFormField<String>(
-                      value: category,
-                      items: categories
-                          .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                      value: weaponPresetValue,
+                      items: weaponPresets
+                          .map((p) => DropdownMenuItem(value: p, child: Text(p)))
                           .toList(),
                       onChanged: (v) => setS(() {
-                        category = v!;
-
-                        // resets propres
-                        if (category != 'WEAPON') {
-                          weaponPresetValue = weaponPresets.first;
-                          damage = null;
-                          dmgCustomCtrl.clear();
-                        }
-                        if (category != 'ARMOR') {
-                          armorPresetValue = armorPresets.first;
-                          defense = null;
-                          defCustomCtrl.clear();
+                        weaponPresetValue = v!;
+                        if (v == 'Personnalisé…') {
+                          final t = dmgCustomCtrl.text.trim();
+                          damage = t.isEmpty ? null : t;
                         } else {
-                          // initialise DEF selon le preset affiché
-                          if (armorPresetValue != 'Personnalisé…') {
-                            defense = int.parse(armorPresetValue.split(' ').first);
-                          } else {
-                            defense = int.tryParse(defCustomCtrl.text.trim());
-                          }
+                          damage = v; // d6, d6/d8, d10, etc.
                         }
                       }),
-                      decoration: const InputDecoration(labelText: 'Catégorie'),
+                      decoration: const InputDecoration(labelText: 'Preset'),
                     ),
 
                     if (weaponPresetValue == 'Personnalisé…') ...[
@@ -263,8 +252,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                       TextField(
                         controller: dmgCustomCtrl,
                         decoration: const InputDecoration(
-                          labelText:
-                              'Dégâts personnalisés (ex: 2d6, d6+1, d6/d10...)',
+                          labelText: 'Dégâts personnalisés (ex: 2d6, d6+1, d6/d10...)',
                         ),
                         onChanged: (v) => setS(() {
                           final t = v.trim();
@@ -369,6 +357,18 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                       existing == null ? 'Nouvel item' : 'Modifier l’item',
                       style: Theme.of(ctx).textTheme.titleLarge,
                     ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: descCtrl,
+                      maxLines: 10,
+                      minLines: 1,
+                      keyboardType: TextInputType.multiline,
+                      decoration: const InputDecoration(
+                        labelText: "Description de l'item",
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+
                     const SizedBox(height: 12),
                     TextField(
                       controller: nameCtrl,
@@ -502,6 +502,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
 
                         final payload = <String, dynamic>{
                           'name': name,
+                          'description': descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
                           'durability_max': durability, // si tu veux ignorer la durabilité des armures
                           'compatible_slots': selected.toList(),
                           'category': category,
@@ -702,11 +703,13 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                       : const Icon(Icons.inventory_2_outlined),
                   title: Text(it['name'] ?? ''),
                   subtitle: Text(
-                    'Cat: ${it['category']} • Durabilité: ${it['durability_max']}'
-                    ' • Slots: ${comp.isEmpty ? "-" : comp.join(", ")}'
-                    '$extra${flags.isNotEmpty ? ' • $flags' : ''}'
-                    '$packTxt',
-                  ),
+                  'Cat: ${it['category']} • Durabilité: ${it['durability_max']}'
+                  ' • Slots: ${comp.isEmpty ? "-" : comp.join(", ")}'
+                  '$extra${flags.isNotEmpty ? ' • $flags' : ''}$packTxt'
+                  '${(it['description'] ?? '').toString().isNotEmpty ? '\n${it['description']}' : ''}',
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
                   trailing: isOwner
                       ? const Icon(Icons.edit)
                       : const Icon(Icons.lock_outline),
