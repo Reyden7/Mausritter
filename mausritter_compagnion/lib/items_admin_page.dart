@@ -10,6 +10,102 @@ class ItemsAdminPage extends StatefulWidget {
   State<ItemsAdminPage> createState() => _ItemsAdminPageState();
 }
 
+
+
+// ----- Widget : sélection visuelle de 0..6 cases dans une grille 3×2
+class _PackShapePicker extends StatelessWidget {
+  final List<int> selected;   // indices 0..5
+  final int maxSelect;        // doit égaler pack_size
+  final ValueChanged<List<int>> onChanged;
+
+  const _PackShapePicker({
+    required this.selected,
+    required this.onChanged,
+    required this.maxSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // grille 3 colonnes × 2 lignes, indices:
+    // 0 1 2
+    // 3 4 5
+    return SizedBox(
+      width: 180,
+      child: AspectRatio(
+        aspectRatio: 3 / 2,
+        child: GridView.builder(
+          padding: EdgeInsets.zero,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: 6,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            mainAxisSpacing: 4,
+            crossAxisSpacing: 4,
+          ),
+          itemBuilder: (_, i) {
+            final isSel = selected.contains(i);
+            return InkWell(
+              onTap: () {
+                final next = List<int>.from(selected);
+                if (isSel) {
+                  next.remove(i);
+                } else {
+                  if (next.length >= maxSelect) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Nombre maximum de cases atteint.')),
+                    );
+                    return;
+                  }
+                  next.add(i);
+                }
+                onChanged(next);
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.black87, width: 1.4),
+                  borderRadius: BorderRadius.circular(4),
+                  color: isSel ? Colors.black87 : Colors.white,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _PackShapePreview extends StatelessWidget {
+  final List<int> selected; // indices 0..5
+  const _PackShapePreview({super.key, required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = {...selected}..removeWhere((i) => i < 0 || i > 5);
+    return SizedBox(
+      width: 54, // compact dans la ListTile
+      child: AspectRatio(
+        aspectRatio: 3/2,
+        child: GridView.builder(
+          padding: EdgeInsets.zero,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: 6,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3, mainAxisSpacing: 1.5, crossAxisSpacing: 1.5,
+          ),
+          itemBuilder: (_, i) => Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.black54, width: 0.9),
+              borderRadius: BorderRadius.circular(2.5),
+              color: s.contains(i) ? Colors.black87 : Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ItemsAdminPageState extends State<ItemsAdminPage> {
   final supa = Supabase.instance.client;
   bool loading = true;
@@ -17,7 +113,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
   final _searchCtrl = TextEditingController();
   Timer? _searchDebounce;
   String _query ='';
-
+  
   static const bucket = 'items'; // bucket Supabase Storage (public conseillé)
 
   // Catégories autorisées (alignées avec la BDD)
@@ -54,10 +150,23 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
     _refresh();
   }
 
+  
+
   void dispose() {
   _searchDebounce?.cancel();
   _searchCtrl.dispose();
   super.dispose();
+}
+
+List<int> _normalizePackShape(List<dynamic>? raw) {
+  if (raw == null) return const [];
+  final s = <int>{};
+  for (final v in raw) {
+    final n = (v is int) ? v : int.tryParse(v.toString());
+    if (n != null && n >= 0 && n <= 5) s.add(n);
+  }
+  final out = s.toList()..sort();
+  return out;
 }
 
   Future<void> _refresh({String q = ''}) async {
@@ -144,14 +253,18 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
       if (parts.length > 1) ext = parts.last.toLowerCase();
       final uid = supa.auth.currentUser!.id;
       final path = '$uid/items_${DateTime.now().millisecondsSinceEpoch}.$ext';
-
-      await supa.storage
-          .from(bucket)
-          .uploadBinary(
-            path,
-            Uint8List.fromList(bytes),
-            fileOptions: FileOptions(upsert: true, contentType: 'image/$ext'),
-          );
+      final contentType = switch (ext) {
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        'jpeg' => 'image/jpeg',
+        'jpg' => 'image/jpeg',
+        _ => 'image/jpeg',
+      };
+      await supa.storage.from(bucket).uploadBinary(
+        path,
+        Uint8List.fromList(bytes),
+        fileOptions: FileOptions(upsert: true, contentType: contentType),
+      );
 
       // Bucket public → URL directe
       final url = supa.storage.from(bucket).getPublicUrl(path);
@@ -175,33 +288,42 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
 
   Future<void> _createOrEdit({Map<String, dynamic>? existing}) async {
     final nameCtrl = TextEditingController(text: existing?['name'] ?? '');
+    final descCtrl = TextEditingController(text: existing?['description'] ?? '');
     final duraCtrl = TextEditingController(
       text: (existing?['durability_max'] ?? 3).toString(),
     );
-    final descCtrl = TextEditingController(text: existing?['description'] ?? '');
+
     String category = existing?['category'] ?? 'OTHER';
     final selected = <String>{
       ...(existing?['compatible_slots']?.cast<String>() ?? <String>[]),
     };
-    int packSize = (existing?['pack_size'] as int?)?.clamp(1,6) ?? 1;
+    int packSize = (existing?['pack_size'] as int?)?.clamp(1, 6) ?? 1;
     String? imageUrl = existing?['image_url'];
     bool twoHanded = (existing?['two_handed'] as bool?) ?? false;
     bool twoBody   = (existing?['two_body']   as bool?) ?? false;
 
-    // Champs spécifiques
+    // NEW: shape PACK 3x2 : indices 0..5
+    List<int> packShape = _normalizePackShape(existing?['pack_shape']);
+
+    // Spécifiques
     String? damage = existing?['damage'] as String?;
     int? defense;
     final raw = existing?['defense'];
-
     if (raw is int) {
       defense = raw;
     } else if (raw != null) {
       defense = int.tryParse(raw.toString());
-    } else {
-      defense = null;
     }
 
-    // Contrôleurs pour “Personnalisé…”
+    // Presets
+    String weaponPresetValue = (damage == null)
+        ? weaponPresets.first
+        : (weaponPresets.contains(damage) ? damage! : 'Personnalisé…');
+
+    String armorPresetValue = (defense == null)
+        ? armorPresets.first
+        : ([1, 2, 3, 4].contains(defense) ? '${defense!} DEF' : 'Personnalisé…');
+
     final dmgCustomCtrl = TextEditingController(
       text: (damage != null && !weaponPresets.contains(damage)) ? damage : '',
     );
@@ -211,62 +333,40 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
           : '',
     );
 
-    // Valeur de preset sélectionnée (ou “Personnalisé…”)
-    String weaponPresetValue = damage == null
-        ? weaponPresets.first
-        : (weaponPresets.contains(damage) ? damage : 'Personnalisé…');
-
-    String armorPresetValue = defense == null
-        ? armorPresets.first
-        : ([1, 2, 3, 4].contains(defense)
-              ? '${defense!} DEF'
-              : 'Personnalisé…');
-
     await showModalBottomSheet(
       isScrollControlled: true,
       context: context,
       builder: (sheetCtx) {
         return Padding(
           padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            top: 16,
+            left: 16, right: 16, top: 16,
             bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 16,
           ),
           child: StatefulBuilder(
             builder: (ctx, setS) {
-              // Widgets conditionnels
               Widget _weaponSection() {
                 if (category != 'WEAPON') return const SizedBox.shrink();
-
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: 12),
-                    Text(
-                      'Dégâts (arme)',
-                      style: Theme.of(ctx).textTheme.titleSmall,
-                    ),
+                    Text('Dégâts (arme)', style: Theme.of(ctx).textTheme.titleSmall),
                     const SizedBox(height: 6),
-
-                    // ✅ Dropdown des PRÉSETS DE DÉGÂTS (et plus le dropdown de "category")
                     DropdownButtonFormField<String>(
                       value: weaponPresetValue,
                       items: weaponPresets
-                          .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                          .map((d) => DropdownMenuItem(value: d, child: Text(d)))
                           .toList(),
                       onChanged: (v) => setS(() {
                         weaponPresetValue = v!;
                         if (v == 'Personnalisé…') {
-                          final t = dmgCustomCtrl.text.trim();
-                          damage = t.isEmpty ? null : t;
+                          damage = dmgCustomCtrl.text.trim().isEmpty ? null : dmgCustomCtrl.text.trim();
                         } else {
-                          damage = v; // d6, d6/d8, d10, etc.
+                          damage = v;
                         }
                       }),
                       decoration: const InputDecoration(labelText: 'Preset'),
                     ),
-
                     if (weaponPresetValue == 'Personnalisé…') ...[
                       const SizedBox(height: 8),
                       TextField(
@@ -280,7 +380,6 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                         }),
                       ),
                     ],
-
                     const SizedBox(height: 8),
                     CheckboxListTile(
                       value: twoHanded,
@@ -299,30 +398,21 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: 12),
-                    Text(
-                      'Défense (armure)',
-                      style: Theme.of(ctx).textTheme.titleSmall,
-                    ),
+                    Text('Défense (armure)', style: Theme.of(ctx).textTheme.titleSmall),
                     const SizedBox(height: 6),
                     DropdownButtonFormField<String>(
                       value: armorPresetValue,
                       items: armorPresets
-                          .map(
-                            (d) => DropdownMenuItem(value: d, child: Text(d)),
-                          )
+                          .map((d) => DropdownMenuItem(value: d, child: Text(d)))
                           .toList(),
                       onChanged: (v) => setS(() {
                         armorPresetValue = v!;
                         if (v == 'Personnalisé…') {
                           defense = int.tryParse(defCustomCtrl.text.trim());
                         } else {
-                          defense = int.parse(
-                            v.split(' ').first,
-                          ); // "1 DEF" -> 1
+                          defense = int.parse(v.split(' ').first);
                         }
-                        
                       }),
-                      
                       decoration: const InputDecoration(labelText: 'Preset'),
                     ),
                     const SizedBox(height: 8),
@@ -338,11 +428,8 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                       TextField(
                         controller: defCustomCtrl,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'DEF personnalisée (entier)',
-                        ),
-                        onChanged: (v) =>
-                            setS(() => defense = int.tryParse(v.trim())),
+                        decoration: const InputDecoration(labelText: 'DEF personnalisée (entier)'),
+                        onChanged: (v) => setS(() => defense = int.tryParse(v.trim())),
                       ),
                     ],
                   ],
@@ -350,7 +437,8 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
               }
 
               Widget _packSizeSection() {
-                if (!selected.contains('PACK')) return const SizedBox.shrink();
+                final hasPack = selected.contains('PACK');
+                if (!hasPack) return const SizedBox.shrink();
                 return Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Row(
@@ -359,11 +447,63 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                       const SizedBox(width: 8),
                       DropdownButton<int>(
                         value: packSize,
-                        items: [1, 2, 3, 4, 5, 6]
+                        items: [1,2,3,4,5,6]
                             .map((n) => DropdownMenuItem(value: n, child: Text('$n')))
                             .toList(),
-                        onChanged: (v) => setS(() => packSize = v ?? 1),
+                        onChanged: (v) => setS(() {
+                          packSize = v ?? 1;
+                          if (packSize > 1 && !selected.contains('PACK')) {
+                            selected.add('PACK');
+                          }
+                          if (packSize <= 1) {
+                            packShape.clear();
+                          } else if (packShape.length > packSize) {
+                            packShape = packShape.take(packSize).toList();
+                          }
+                        }),
                       ),
+                    ],
+                  ),
+                );
+              }
+
+              // NEW: Picker visuel 3×2 pour la shape
+              Widget _packShapeSection() {
+                final hasPack = selected.contains('PACK');
+                if (!hasPack || packSize <= 1) return const SizedBox.shrink();
+
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Disposition :'),
+                      const SizedBox(height: 6),
+                      _PackShapePicker(
+                        selected: packShape,
+                        onChanged: (newList) => setS(() => packShape = newList),
+                        maxSelect: packSize,
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Cases cochées : ${packShape.length} / $packSize',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: (packShape.length == packSize) ? Colors.green[800] : Colors.red[800],
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => setS(() => packShape.clear()),
+                          icon: const Icon(Icons.restart_alt, size: 18),
+                          label: const Text('Réinitialiser'),
+                        ),
+                        _PackShapePreview(selected: packShape),
+                      ],
+                    ),
                     ],
                   ),
                 );
@@ -373,66 +513,45 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      existing == null ? 'Nouvel item' : 'Modifier l’item',
-                      style: Theme.of(ctx).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
+                    Text(existing == null ? 'Nouvel item' : 'Modifier l’item',
+                      style: Theme.of(ctx).textTheme.titleLarge),
+                    const SizedBox(height: 12),
+
+                    // NEW: Description
                     TextField(
                       controller: descCtrl,
-                      maxLines: 10,
-                      minLines: 1,
-                      keyboardType: TextInputType.multiline,
-                      decoration: const InputDecoration(
-                        labelText: "Description de l'item",
-                        alignLabelWithHint: true,
-                      ),
+                      decoration: const InputDecoration(labelText: 'Description de l’item'),
                     ),
+                    const SizedBox(height: 8),
 
-                    const SizedBox(height: 12),
                     TextField(
                       controller: nameCtrl,
                       decoration: const InputDecoration(labelText: 'Nom'),
                       textInputAction: TextInputAction.next,
                     ),
                     const SizedBox(height: 8),
+
                     TextField(
                       controller: duraCtrl,
                       enabled: true,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Durabilité max (ex: 3)',
-                      ),
+                      decoration: const InputDecoration(labelText: 'Durabilité max (ex: 3)'),
                     ),
                     const SizedBox(height: 8),
+
                     DropdownButtonFormField<String>(
                       value: category,
                       items: categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                       onChanged: (v) => setS(() {
                         category = v!;
-
-                        // reset propres
-                        if (category != 'WEAPON') {
-                          weaponPresetValue = weaponPresets.first;
-                          damage = null;
-                          dmgCustomCtrl.clear();
-                        }
-                        if (category != 'ARMOR') {
-                          armorPresetValue = armorPresets.first;
-                          defense = null;
-                          defCustomCtrl.clear();
-                        } else {
-                          // ← ICI : on initialise defense selon le preset affiché
-                          if (armorPresetValue != 'Personnalisé…') {
-                            defense = int.parse(armorPresetValue.split(' ').first); // "1 DEF" -> 1
-                          } else {
-                            defense = int.tryParse(defCustomCtrl.text.trim());
-                          }
-                        }
-                    }),
-                    decoration: const InputDecoration(labelText: 'Catégorie'),
-                  ),
+                        // resets propres
+                        if (category != 'WEAPON') { weaponPresetValue = weaponPresets.first; damage = null; dmgCustomCtrl.clear(); twoHanded = false; }
+                        if (category != 'ARMOR' ) { armorPresetValue  = armorPresets.first;  defense = null;  defCustomCtrl.clear(); twoBody   = false; }
+                      }),
+                      decoration: const InputDecoration(labelText: 'Catégorie'),
+                    ),
                     const SizedBox(height: 8),
+
                     Wrap(
                       spacing: 8,
                       children: slots.map((s) {
@@ -446,6 +565,11 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                             } else {
                               selected.remove(s);
                             }
+                            // Si PACK est retiré → wipe shape et taille
+                            if (!selected.contains('PACK')) {
+                              packSize = 1;
+                              packShape.clear();
+                            }
                           }),
                         );
                       }).toList(),
@@ -455,6 +579,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                     _weaponSection(),
                     _armorSection(),
                     _packSizeSection(),
+                    _packShapeSection(),
 
                     const SizedBox(height: 12),
                     Row(
@@ -468,9 +593,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                               setS(() => imageUrl = url);
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Image importée ✔'),
-                                  ),
+                                  const SnackBar(content: Text('Image importée ✔')),
                                 );
                               }
                             }
@@ -489,10 +612,12 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                       ],
                     ),
                     const SizedBox(height: 16),
+
                     FilledButton(
                       onPressed: () async {
                         final name = nameCtrl.text.trim();
                         final durability = int.tryParse(duraCtrl.text.trim()) ?? 3;
+                        final description = descCtrl.text.trim();
 
                         if (name.isEmpty) {
                           ScaffoldMessenger.of(ctx).showSnackBar(
@@ -501,7 +626,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                           return;
                         }
 
-                        // ← récupère la DEF effective si ARMOR
+                        // ARMOR: DEF obligatoire
                         int? effDefense;
                         if (category == 'ARMOR') {
                           if (armorPresetValue != 'Personnalisé…') {
@@ -516,33 +641,62 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                             return;
                           }
                         }
-                        if (!selected.contains('PACK') && packSize > 1) {
-                          packSize = 1;
-                        }
+
+                        // PACK: cohérence taille/shape
+                          if (selected.contains('PACK')) {
+                            // normalise packSize
+                            packSize = packSize.clamp(1, 6);
+                            // filtre/unique/tri + borne 0..5
+                            final norm = <int>{};
+                            for (final v in packShape) {
+                              if (v is int && v >= 0 && v <= 5) norm.add(v);
+                            }
+                            packShape = norm.toList()..sort();
+
+                            if (packSize > 1) {
+                              if (packShape.length != packSize) {
+                                ScaffoldMessenger.of(ctx).showSnackBar(
+                                  const SnackBar(content: Text('⚠️ Attention : vous n’avez pas sélectionné le bon nombre d’emplacements.')),
+                                );
+                                return;
+                              }
+                            } else {
+                              // taille 1 → pas de shape stockée
+                              packShape.clear();
+                            }
+                          } else {
+                            // pas de PACK → normalise
+                            packSize = 1;
+                            packShape.clear();
+                          }
 
                         final payload = <String, dynamic>{
                           'name': name,
-                          'description': descCtrl.text.trim().isEmpty ? null : descCtrl.text.trim(),
-                          'durability_max': durability, // si tu veux ignorer la durabilité des armures
+                          'description': description.isEmpty ? null : description,
+                          'durability_max': durability,
                           'compatible_slots': selected.toList(),
                           'category': category,
                           'created_by': supa.auth.currentUser!.id,
 
                           'damage': category == 'WEAPON'
-                            ? (() {
-                                if (damage != null && damage!.isNotEmpty) return damage;
-                                final txt = dmgCustomCtrl.text.trim();
-                                return txt.isNotEmpty ? txt : null;
-                              }())
-                            : null,
+                              ? (() {
+                                  if (damage != null && damage!.isNotEmpty) return damage;
+                                  final txt = dmgCustomCtrl.text.trim();
+                                  return txt.isNotEmpty ? txt : null;
+                                }())
+                              : null,
 
-                          // ← utilise la DEF effective
-                          'defense': category == 'ARMOR'? (defense ?? int.tryParse(defCustomCtrl.text.trim())): null,
+                          'defense': category == 'ARMOR'
+                              ? (effDefense ?? int.tryParse(defCustomCtrl.text.trim()))
+                              : null,
 
-                          // flags
-                          'two_handed': category == 'WEAPON' ? (twoHanded ?? false) : false,
-                          'two_body'  : category == 'ARMOR'  ? (twoBody   ?? false) : false,
+                          'two_handed': category == 'WEAPON' ? (twoHanded) : false,
+                          'two_body'  : category == 'ARMOR'  ? (twoBody)   : false,
+
                           'pack_size': selected.contains('PACK') ? packSize : 1,
+                          'pack_shape': (selected.contains('PACK') && packSize > 1)
+                              ? packShape
+                              : null,
                         };
 
                         if (imageUrl != null) payload['image_url'] = imageUrl;
@@ -556,6 +710,7 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
 
                             await supa.from('items').update(payload).eq('id', existing['id']).select();
 
+                            // nettoyage éventuel de l'ancienne image
                             if (oldImage != null && newImage != null && oldImage != newImage) {
                               try {
                                 if (oldImage.contains('/object/public/items/')) {
@@ -581,14 +736,12 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                       },
                       child: Text(existing == null ? 'Créer' : 'Enregistrer'),
                     ),
+
                     const SizedBox(height: 8),
-                    if (existing != null &&
-                        existing['created_by'] == supa.auth.currentUser!.id)
+                    if (existing != null && existing['created_by'] == supa.auth.currentUser!.id)
                       TextButton.icon(
                         icon: const Icon(Icons.delete_outline),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.red,
-                        ),
+                        style: TextButton.styleFrom(foregroundColor: Colors.red),
                         onPressed: () async {
                           final ok = await showDialog<bool>(
                             context: context,
@@ -596,36 +749,22 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                               title: const Text('Supprimer cet item ?'),
                               content: Text(existing['name'] ?? ''),
                               actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(dCtx, false),
-                                  child: const Text('Annuler'),
-                                ),
-                                FilledButton(
-                                  onPressed: () => Navigator.pop(dCtx, true),
-                                  child: const Text('Supprimer'),
-                                ),
+                                TextButton(onPressed: () => Navigator.pop(dCtx, false), child: const Text('Annuler')),
+                                FilledButton(onPressed: () => Navigator.pop(dCtx, true), child: const Text('Supprimer')),
                               ],
                             ),
                           );
                           if (ok != true) return;
 
-                          await supa
-                              .from('items')
-                              .delete()
-                              .eq('id', existing['id']);
+                          await supa.from('items').delete().eq('id', existing['id']);
 
                           try {
                             final url = existing['image_url'] as String?;
-                            if (url != null &&
-                                url.contains('/object/public/items/')) {
-                              final path = url
-                                  .split('/object/public/items/')
-                                  .last;
+                            if (url != null && url.contains('/object/public/items/')) {
+                              final path = url.split('/object/public/items/').last;
                               await supa.storage.from(bucket).remove([path]);
                             }
-                          } catch (_) {
-                            /* non bloquant */
-                          }
+                          } catch (_) {}
 
                           if (context.mounted) Navigator.pop(sheetCtx);
                           await _refresh();
@@ -637,15 +776,6 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                         },
                         label: const Text('Supprimer'),
                       ),
-                    if (existing != null &&
-                        existing['created_by'] != supa.auth.currentUser!.id)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 8),
-                        child: Text(
-                          'Tu ne peux modifier/supprimer que tes propres items.',
-                          style: TextStyle(color: Colors.red),
-                        ),
-                      ),
                   ],
                 ),
               );
@@ -654,7 +784,10 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
         );
       },
     );
-  }
+}
+
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -762,9 +895,21 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                 ),
-                  trailing: isOwner
-                      ? const Icon(Icons.edit)
-                      : const Icon(Icons.lock_outline),
+                  trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isOwner) const Icon(Icons.edit),
+                    if (showPackSize && (it['pack_shape'] is List) && (it['pack_shape'] as List).isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      _PackShapePreview(
+                        selected: (it['pack_shape'] as List)
+                          .map((e) => int.tryParse(e.toString()) ?? -1)
+                          .where((i) => i >= 0 && i <= 5)
+                          .toList(),
+                      ),
+                    ],
+                  ],
+                ),
                   onTap: () => isOwner
                       ? _createOrEdit(existing: it)
                       : ScaffoldMessenger.of(context).showSnackBar(
