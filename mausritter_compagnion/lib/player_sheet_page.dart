@@ -2063,6 +2063,30 @@ Widget build(BuildContext context) {
                   // --- badge dégâts/défense en haut-droite ---
                   Positioned(top: 6, right: 6, child: _itemBadgeFor(it)),
 
+                    Positioned(
+                    left: 5,
+                    bottom: 5,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: Tooltip(
+                        message: 'Supprimer',
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () => _unequip(slot),
+                          child: Container(
+                            padding: const EdgeInsets.all(1),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white.withOpacity(0.95),
+                              border: Border.all(color: Colors.black87, width: 1.1),
+                            ),
+                            child: Icon(Icons.close, size: 8, color: Colors.red.shade700),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
                   // --- points de durabilité centrés en bas ---
                   // ← ne pas afficher pour ARMOR
                   if (it.category != 'ARMOR' && it.durabilityMax > 0)
