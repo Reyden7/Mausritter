@@ -1357,9 +1357,28 @@ if (slotTag(slot) == 'PACK') {
     final eq = await supa
         .from('character_items')
         .select(
-          'slot,item_id,durability_used, items(name,image_url,durability_max,category,damage,defense,two_handed, two_body, pack_size,description,pack_shape,pack_can_rotate)',
+        '''
+        slot,
+        item_id,
+        durability_used,
+        custom_description,
+        items(
+          name,
+          image_url,
+          durability_max,
+          category,
+          damage,
+          defense,
+          two_handed,
+          two_body,
+          pack_size,
+          description,
+          pack_shape,
+          pack_can_rotate
         )
-        .eq('character_id', characterId);
+        ''',
+      )
+      .eq('character_id', characterId);
 
     // on vide d’abord (au cas où)
     for (final k in equipment.keys.toList()) {
@@ -1370,11 +1389,15 @@ if (slotTag(slot) == 'PACK') {
       final item = e['items'] as Map<String, dynamic>;
       final slot = _fromSlotString(e['slot'] as String);
       final itemId = e['item_id'].toString();
+      final customDesc = e['custom_description'] as String?;
 
       final equipped = EquippedItem(
         id: itemId,
         name: (item['name'] ?? '') as String,
-        description: item['description'] as String?,
+        description: // priorité à la description custom du joueur
+            (customDesc != null && customDesc.trim().isNotEmpty)
+                ? customDesc
+                : item['description'] as String?,
         imageUrl: item['image_url'] as String?,
         durabilityMax: (item['durability_max'] as int?) ?? 3,
         durabilityUsed: (e['durability_used'] as int?) ?? 0,
@@ -1453,81 +1476,153 @@ if (slotTag(slot) == 'PACK') {
   }
 
   Future<void> _saveCharacter({
-  bool force = false,
-  bool showFeedback = false,
-}) async {
-  if (!mounted) return;
+    bool force = false,
+    bool showFeedback = false,
+    }) async {
+    if (!mounted) return;
 
-  _saveTimer?.cancel();
-  final now = DateTime.now();
-  if (!force && now.difference(_lastSave) < const Duration(milliseconds: 400)) {
-    return;
-  }
-  _lastSave = now;
-
-  final id = await _ensureCharacterId();
-  if (id == null) {
-    if (showFeedback) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Impossible d’identifier l’utilisateur.')),
-      );
+    _saveTimer?.cancel();
+    final now = DateTime.now();
+    if (!force && now.difference(_lastSave) < const Duration(milliseconds: 400)) {
+      return;
     }
-    return;
-  }
+    _lastSave = now;
 
-  try {
-    level = int.tryParse(levelCtrl.text.trim()) ?? level;
-    xp    = int.tryParse(xpCtrl.text.trim()) ?? xp;
+    final id = await _ensureCharacterId();
+    if (id == null) {
+      if (showFeedback) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Impossible d’identifier l’utilisateur.')),
+        );
+      }
+      return;
+    }
 
-    // ✅ On sauve TOUT dans le JSON `stats` + `pepin_cur`
-    final payload = {
-      'name': nameCtrl.text.trim(),
-      'background': backgroundCtrl.text.trim(),
-      'level': level,
-      'xp': xp,
-      'pepin_cur': pepinCur,
-      'stats': {
-        'str': {'max': strMax, 'cur': strCur},
-        'dex': {'max': dexMax, 'cur': dexCur},
-        'wil': {'max': wilMax, 'cur': wilCur},
-        'hp' : {'max': hpMax , 'cur': hpCur },
-      },
-      'journal': journalCtrl.text.trim(),
-    };
+    try {
+      level = int.tryParse(levelCtrl.text.trim()) ?? level;
+      xp    = int.tryParse(xpCtrl.text.trim()) ?? xp;
 
-    await supa.from('characters').update(payload).eq('id', id);
+      // ✅ On sauve TOUT dans le JSON `stats` + `pepin_cur`
+      final payload = {
+        'name': nameCtrl.text.trim(),
+        'background': backgroundCtrl.text.trim(),
+        'level': level,
+        'xp': xp,
+        'pepin_cur': pepinCur,
+        'stats': {
+          'str': {'max': strMax, 'cur': strCur},
+          'dex': {'max': dexMax, 'cur': dexCur},
+          'wil': {'max': wilMax, 'cur': wilCur},
+          'hp' : {'max': hpMax , 'cur': hpCur },
+        },
+        'journal': journalCtrl.text.trim(),
+      };
 
-    // --- items équipés (inchangé)
-    for (final entry in equipment.entries) {
-      final slotDb = _slotToDb(entry.key);
-      final it = entry.value;
-      if (it == null) {
-        await supa.from('character_items').delete().match({
-          'character_id': id,
-          'slot': slotDb,
-        });
-      } else {
-        await supa.from('character_items').upsert({
+      await supa.from('characters').update(payload).eq('id', id);
+
+      // --- items équipés (inchangé)
+      for (final entry in equipment.entries) {
+        final slotDb = _slotToDb(entry.key);
+        final it = entry.value;
+
+        if (it == null) {
+          await supa.from('character_items').delete().match({
+            'character_id': id,
+            'slot': slotDb,
+          });
+          continue;
+        }
+
+        // Option CONTAINER : description personnalisée du joueur
+        final cd = it.description?.trim();
+
+        final Map<String, dynamic> payload = {
           'character_id': id,
           'slot': slotDb,
           'item_id': it.id,
           'durability_used': it.durabilityUsed,
-        }, onConflict: 'character_id,slot');
+          if (it.category == 'CONTAINER' && cd != null && cd.isNotEmpty)
+            'custom_description': cd,
+        };
+
+        await supa.from('character_items').upsert(
+          payload,
+          onConflict: 'character_id,slot',
+        );
+      }
+
+      if (showFeedback) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Fiche enregistrée ✅')));
+      }
+    } catch (e) {
+      if (showFeedback) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Erreur à l’enregistrement : $e')));
       }
     }
+}
+    Future<void> _setCustomDescriptionForItem(String itemId, String? newDesc) async {
+    final id = _characterId;
+    if (id == null) return;
 
-    if (showFeedback) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Fiche enregistrée ✅')));
+    // Tous les slots qui tiennent ce même item (pack multi-cases, 2 mains/corps…)
+    final slots = _allSlotsHolding(itemId);
+
+    // 1) Persist
+    for (final s in slots) {
+      await supa.from('character_items').update({
+        'custom_description': (newDesc == null || newDesc.trim().isEmpty) ? null : newDesc.trim(),
+      }).match({
+        'character_id': id,
+        'slot': _slotToDb(s),
+      });
     }
-  } catch (e) {
-    if (showFeedback) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Erreur à l’enregistrement : $e')));
+
+    // 2) Refresh local depuis la BDD (retrouve la description par défaut si on efface)
+    await _loadEquipmentFor(id);
+  }
+
+  Future<void> _editItemDescription(SlotType slot) async {
+    final it = equipment[slot];
+    if (it == null) return;
+    if (it.category != 'CONTAINER') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Seuls les objets de type CONTAINER sont modifiables.")),
+      );
+      return;
+    }
+
+    final ctrl = TextEditingController(text: it.description ?? '');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Description personnalisée – ${it.name}"),
+        content: SizedBox(
+          width: 500,
+          child: TextField(
+            controller: ctrl,
+            maxLines: null,
+            minLines: 5,
+            keyboardType: TextInputType.multiline,
+            textInputAction: TextInputAction.newline,
+            decoration: const InputDecoration(
+              hintText: "Ta description de joueur (laisser vide pour revenir à celle du MJ).",
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Enregistrer')),
+        ],
+      ),
+    );
+
+    if (ok == true) {
+      await _setCustomDescriptionForItem(it.id, ctrl.text);
     }
   }
-}
-
 
   Future<void> _killMouse() async {
     if (_characterId == null) return;
@@ -2382,6 +2477,32 @@ Widget build(BuildContext context) {
                     ),
                   ),
                 ),
+
+                // Bouton éditer (seulement CONTAINER)
+                if (it.category == 'CONTAINER')
+                  Positioned(
+                    left: 28, // à côté du bouton supprimer (qui est à left:5)
+                    bottom: 5,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: Tooltip(
+                        message: 'Modifier la description',
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () => _editItemDescription(slot),
+                          child: Container(
+                            padding: const EdgeInsets.all(1),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white.withOpacity(0.95),
+                              border: Border.all(color: Colors.black87, width: 1.1),
+                            ),
+                            child: const Icon(Icons.edit, size: 10, color: Colors.black87),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
 
                 if (it.category != 'ARMOR' && it.durabilityMax > 0)
                   Positioned(
