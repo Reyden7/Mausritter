@@ -177,6 +177,37 @@ class EquippedItem {
   });
 }
 
+final Map<SlotType, GlobalKey> _slotKeys = {
+  SlotType.pawMain: GlobalKey(),
+  SlotType.pawOff:  GlobalKey(),
+  SlotType.body1:   GlobalKey(),
+  SlotType.body2:   GlobalKey(),
+  SlotType.pack1:   GlobalKey(),
+  SlotType.pack2:   GlobalKey(),
+  SlotType.pack3:   GlobalKey(),
+  SlotType.pack4:   GlobalKey(),
+  SlotType.pack5:   GlobalKey(),
+  SlotType.pack6:   GlobalKey(),
+};
+
+Size _slotSize(SlotType s) {
+  final ctx = _slotKeys[s]?.currentContext;
+  final box = ctx?.findRenderObject() as RenderBox?;
+  return box?.size ?? const Size(120, 120); // fallback sûr
+}
+
+class _DragPayload {
+  final SlotType from;           // slot d’origine
+  final EquippedItem item;       // item déplacé
+  final List<SlotType> occupied; // toutes les cases prises par cet item
+
+  _DragPayload({
+    required this.from,
+    required this.item,
+    required this.occupied,
+  });
+}
+
 SlotType _otherPaw(SlotType s) =>
     s == SlotType.pawMain ? SlotType.pawOff : SlotType.pawMain;
 
@@ -226,6 +257,7 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
     _load();
   }
 
+  
   Future<void> _load() async {
     setState(() => loading = true);
     final uid = supa.auth.currentUser!.id;
@@ -343,6 +375,13 @@ class _CharacterPickerPageState extends State<CharacterPickerPage> {
                 ),
     );
   }
+}
+
+Offset _centerAnchorStrategy(Draggable<Object> _, BuildContext ctx, Offset __) {
+  final box = ctx.findRenderObject() as RenderBox?;
+  final size = box?.size ?? const Size(60, 60);
+  // Décale l’origine du feedback au CENTRE du widget
+  return Offset(size.width / 2, size.height / 2);
 }
 
 
@@ -550,6 +589,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
   final pepinCtrl = TextEditingController(text: '0');
   final journalCtrl = TextEditingController();
   int pepinCur = 0;
+  SlotType? _dragHover;
 
   void _scheduleAutoSave() {
     _saveTimer?.cancel();
@@ -620,6 +660,30 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
 
 int _packIndex(SlotType s) => _packs.indexOf(s); // 0..5
 
+List<SlotType> _allSlotsHolding(String itemId) {
+  final out = <SlotType>[];
+  for (final kv in equipment.entries) {
+    if (kv.value?.id == itemId) out.add(kv.key);
+  }
+  return out;
+}
+
+// Compat de base par type de slot
+bool _accepts(SlotType target, EquippedItem it) {
+  switch (target) {
+    case SlotType.pawMain:
+    case SlotType.pawOff:
+      return it.category == 'WEAPON' || it.category == 'TOOL' || it.category == 'OTHER';
+    case SlotType.body1:
+    case SlotType.body2:
+      return it.category == 'ARMOR' || it.category == 'AMMO' || it.category == 'OTHER';
+    default:
+      return true; // PACK accepte tout (on gère la shape/size après)
+  }
+}
+
+
+
 /// Cherche un bloc contigu de 'need' cases PACK libres.
 /// Essaie d’abord depuis 'preferredStart' si fourni.
 List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
@@ -645,6 +709,209 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
   }
   return [];
 }
+
+bool _canDropHere(_DragPayload d, SlotType target) {
+  final it = d.item;
+
+  if (target == d.from) return true;                 // reposer au même endroit
+  if (!_accepts(target, it)) return false;           // compat basique
+
+  if (_isPack(target)) {
+    if (it.packSize <= 1) {
+      return equipment[target] == null || equipment[target]?.id == it.id;
+    } else {
+      // on laisse passer, la boîte de placement filtrera vraiment
+      return true;
+    }
+  }
+
+  // Pattes 2 mains : l’autre doit être libre ou déjà occupé par ce même item
+  if ((target == SlotType.pawMain || target == SlotType.pawOff) && it.two_handed) {
+    final other = _otherPaw(target);
+    return equipment[other] == null || equipment[other]?.id == it.id;
+  }
+
+  // Corps 2 cases : idem
+  if ((target == SlotType.body1 || target == SlotType.body2) && it.two_body) {
+    final other = _otherBody(target);
+    return equipment[other] == null || equipment[other]?.id == it.id;
+  }
+
+  // Sinon case libre ou déjà ce même item
+  return equipment[target] == null || equipment[target]?.id == it.id;
+}
+
+Future<void> _performDrop(_DragPayload d, SlotType target) async {
+  final it = d.item;
+
+  // 1) on libère les cases d’origine de cet item
+  await _clearEverywhere(it);
+
+  // 2) placement selon le type cible
+  if (_isPack(target)) {
+    if (it.packSize <= 1) {
+      setState(() => equipment[target] = it);
+      final id = _characterId;
+      if (id != null) {
+        await supa.from('character_items').upsert({
+          'character_id': id,
+          'slot': _slotToDb(target),
+          'item_id': it.id,
+          'durability_used': it.durabilityUsed,
+        }, onConflict: 'character_id,slot');
+      }
+      return;
+    } else {
+      // Multi-cases → on récupère shape/canRotate puis on ouvre la boîte de placement
+      final row = await supa
+          .from('items')
+          .select('pack_shape,pack_can_rotate,pack_size')
+          .eq('id', it.id)
+          .maybeSingle();
+
+      List<int> shape = ((row?['pack_shape'] as List?) ?? const [])
+          .map((e) => int.tryParse(e.toString()) ?? -1)
+          .where((i) => i >= 0 && i <= 5)
+          .toList();
+      final canRotate = (row?['pack_can_rotate'] as bool?) ?? true;
+      final size = (row?['pack_size'] as int?)?.clamp(1, 6) ?? it.packSize;
+
+      if (shape.length != size) {
+        shape = List<int>.generate(size, (i) => i);
+      }
+
+      const order = [
+        SlotType.pack1, SlotType.pack2, SlotType.pack3,
+        SlotType.pack4, SlotType.pack5, SlotType.pack6,
+      ];
+      final occupied = <int>{};
+      for (int i = 0; i < order.length; i++) {
+        if (equipment[order[i]] != null) occupied.add(i);
+      }
+      final preferredIndex = order.indexOf(target);
+
+      final chosenIdxs = await showModalBottomSheet<List<int>>(
+        context: context,
+        isScrollControlled: true,
+        builder: (_) => _PackPlacementDialog(
+          shape: shape,
+          canRotate: canRotate,
+          occupied: occupied,
+          preferredIndex: preferredIndex,
+        ),
+      );
+
+      if (chosenIdxs == null || chosenIdxs.isEmpty) return;
+
+      final chosenSlots = chosenIdxs.map((i) => order[i]).toList();
+
+      setState(() {
+        for (final s in chosenSlots) {
+          equipment[s] = it;
+        }
+      });
+
+      final id = _characterId;
+      if (id != null) {
+        for (final s in chosenSlots) {
+          await supa.from('character_items').upsert({
+            'character_id': id,
+            'slot': _slotToDb(s),
+            'item_id': it.id,
+            'durability_used': it.durabilityUsed,
+          }, onConflict: 'character_id,slot');
+        }
+      }
+      await _updateDurability(chosenSlots.first, it.durabilityUsed);
+      return;
+    }
+  }
+
+  // PATTE
+  if (target == SlotType.pawMain || target == SlotType.pawOff) {
+    setState(() {
+      equipment[target] = it;
+      if (it.category == 'WEAPON' && it.two_handed) {
+        equipment[_otherPaw(target)] = it;
+      }
+    });
+
+    final id = _characterId;
+    if (id != null) {
+      await supa.from('character_items').upsert({
+        'character_id': id,
+        'slot': _slotToDb(target),
+        'item_id': it.id,
+        'durability_used': it.durabilityUsed,
+      }, onConflict: 'character_id,slot');
+      if (it.two_handed) {
+        await supa.from('character_items').upsert({
+          'character_id': id,
+          'slot': _slotToDb(_otherPaw(target)),
+          'item_id': it.id,
+          'durability_used': it.durabilityUsed,
+        }, onConflict: 'character_id,slot');
+      }
+    }
+    await _updateDurability(target, it.durabilityUsed);
+    if (it.two_handed) {
+      await _updateDurability(_otherPaw(target), it.durabilityUsed);
+    }
+    return;
+  }
+
+  // CORPS
+  if (target == SlotType.body1 || target == SlotType.body2) {
+    setState(() {
+      equipment[target] = it;
+      if (it.category == 'ARMOR' && it.two_body) {
+        equipment[_otherBody(target)] = it;
+      }
+    });
+
+    final id = _characterId;
+    if (id != null) {
+      await supa.from('character_items').upsert({
+        'character_id': id,
+        'slot': _slotToDb(target),
+        'item_id': it.id,
+        'durability_used': it.durabilityUsed,
+      }, onConflict: 'character_id,slot');
+      if (it.category == 'ARMOR' && it.two_body) {
+        await supa.from('character_items').upsert({
+          'character_id': id,
+          'slot': _slotToDb(_otherBody(target)),
+          'item_id': it.id,
+          'durability_used': it.durabilityUsed,
+        }, onConflict: 'character_id,slot');
+      }
+    }
+    // (pas de durabilité pour ARMOR)
+    return;
+  }
+}
+
+
+Future<void> _clearEverywhere(EquippedItem it) async {
+  final id = _characterId;
+  final slots = _allSlotsHolding(it.id);
+
+  setState(() {
+    for (final s in slots) {
+      equipment[s] = null;
+    }
+  });
+
+  if (id != null) {
+    for (final s in slots) {
+      await supa.from('character_items').delete().match({
+        'character_id': id,
+        'slot': _slotToDb(s),
+      });
+    }
+  }
+}
+
 
 Future<void> _openJournalDialog() async {
   await showDialog(
@@ -2009,165 +2276,174 @@ Widget build(BuildContext context) {
 
   // ---------------- Slots & Pack ----------------
   Widget _slotCard(SlotType slot, {double? height}) {
-    final it = equipment[slot];
+  final it = equipment[slot];
+  final isHover = _dragHover == slot;
 
-    return GestureDetector(
-      onTap: () => _pickItemForSlot(slot),
-      onLongPress: () => _unequip(slot),
-      child: Container(
-        height: height ?? 120,
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.black54, width: 1.3),
-          borderRadius: BorderRadius.circular(10),
-          color: Colors.white.withOpacity(0.6),
+  Offset _centerAnchorFor(SlotType s, Draggable<Object> _, BuildContext __, Offset ___) {
+  final sz = _slotSize(s);
+  return Offset(sz.width / 2, sz.height / 2);
+}
+
+  // carte visuelle (utilisée par child / feedback)
+  Widget _buildCard() {
+    return Container(
+      key: _slotKeys[slot],
+      height: height ?? 120,
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: isHover ? Colors.blueAccent : Colors.black54,
+          width: isHover ? 2.2 : 1.3,
         ),
-        clipBehavior: Clip.antiAlias, // évite tout overflow
-        child: it == null
-            ? Center(
-                child: Text(
-                  slotLabel(slot),
-                  style: const TextStyle(color: Colors.black87),
+        borderRadius: BorderRadius.circular(10),
+        color: Colors.white.withOpacity(0.6),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: it == null
+          ? Center(child: Text(slotLabel(slot), style: const TextStyle(color: Colors.black87)))
+          : Stack(
+              fit: StackFit.expand,
+              children: [
+                if (it.imageUrl != null)
+                  Image.network(it.imageUrl!, fit: BoxFit.cover)
+                else
+                  const Center(child: Icon(Icons.inventory_2_outlined, size: 42)),
+
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                        colors: [Colors.black.withOpacity(0.35), Colors.transparent, Colors.black.withOpacity(0.45)],
+                        stops: const [0.0, 0.55, 1.0],
+                      ),
+                    ),
+                  ),
                 ),
-              )
-            : Stack(
-                fit: StackFit.expand,
-                children: [
-                  // --- image de fond ---
-                  if (it.imageUrl != null)
-                    Image.network(it.imageUrl!, fit: BoxFit.cover)
-                  else
-                    const Center(
-                      child: Icon(Icons.inventory_2_outlined, size: 42),
-                    ),
 
-                  // --- voile pour lisibilité (haut et bas)
-                  Positioned.fill(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.black.withOpacity(0.35),
-                            Colors.transparent,
-                            Colors.black.withOpacity(0.45),
-                          ],
-                          stops: const [0.0, 0.55, 1.0],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  // --- bouton info haut-gauche ---
-                  if ((it.description ?? '').isNotEmpty)
-                    Positioned(
-                      top: 6,
-                      left: 6,
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          customBorder: const CircleBorder(),
-                          onTap: () {
-                            showDialog(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                title: Text(it.name),
-                                content: SingleChildScrollView(
-                                  child: Text(
-                                    it.description!,
-                                    textAlign: TextAlign.left,
-                                  ),
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(ctx),
-                                    child: const Text('Fermer'),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                          child: const Padding(
-                            padding: EdgeInsets.all(4.0),
-                            child: Icon(Icons.info_outline, size: 18, color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                  // --- titre centré en haut ---
+                if ((it.description ?? '').isNotEmpty)
                   Positioned(
-                    left: 6,
-                    right: 6,
-                    top: 30,
-                    child: Text(
-                      it.name,
-                      maxLines: null,
-                      textAlign: TextAlign.center,
-                      softWrap: true,            // ← autorise retour à la ligne
-                      overflow: TextOverflow.visible, // ← rien n'est tronqué           
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                        height: 1.1,             // ← compact mais lisible
-                        shadows: [
-                          Shadow(color: Colors.black54, blurRadius: 6),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // --- badge dégâts/défense en haut-droite ---
-                  Positioned(top: 6, right: 6, child: _itemBadgeFor(it)),
-
-                    Positioned(
-                    left: 5,
-                    bottom: 5,
+                    top: 6, left: 6,
                     child: Material(
                       color: Colors.transparent,
-                      child: Tooltip(
-                        message: 'Supprimer',
-                        child: InkWell(
-                          customBorder: const CircleBorder(),
-                          onTap: () => _unequip(slot),
-                          child: Container(
-                            padding: const EdgeInsets.all(1),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.white.withOpacity(0.95),
-                              border: Border.all(color: Colors.black87, width: 1.1),
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: () {
+                          showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: Text(it.name),
+                              content: SingleChildScrollView(child: Text(it.description!, textAlign: TextAlign.left)),
+                              actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fermer'))],
                             ),
-                            child: Icon(Icons.close, size: 8, color: Colors.red.shade700),
-                          ),
+                          );
+                        },
+                        child: const Padding(
+                          padding: EdgeInsets.all(4.0),
+                          child: Icon(Icons.info_outline, size: 18, color: Colors.white),
                         ),
                       ),
                     ),
                   ),
 
-                  // --- points de durabilité centrés en bas ---
-                  // ← ne pas afficher pour ARMOR
-                  if (it.category != 'ARMOR' && it.durabilityMax > 0)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 6,
-                      child: Center(
-                        child: _durabilityDotsForSlot(
-                          slot,
-                          max: it.durabilityMax,
-                          used: it.durabilityUsed,
-                          color: Colors.white,
-                          size: 16,
-                          spacing: 6,
+                Positioned(
+                  left: 6, right: 6, top: 30,
+                  child: Text(
+                    it.name,
+                    maxLines: null, textAlign: TextAlign.center, softWrap: true, overflow: TextOverflow.visible,
+                    style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white, height: 1.1,
+                      shadows: [Shadow(color: Colors.black54, blurRadius: 6)],
+                    ),
+                  ),
+                ),
+
+                Positioned(top: 6, right: 6, child: _itemBadgeFor(it)),
+
+                // bouton supprimer
+                Positioned(
+                  left: 5, bottom: 5,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Tooltip(
+                      message: 'Supprimer',
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: () => _unequip(slot),
+                        child: Container(
+                          padding: const EdgeInsets.all(1),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withOpacity(0.95),
+                            border: Border.all(color: Colors.black87, width: 1.1),
+                          ),
+                          child: Icon(Icons.close, size: 8, color: Colors.red.shade700),
                         ),
                       ),
                     ),
-                ],
-              ),
-      ),
+                  ),
+                ),
+
+                if (it.category != 'ARMOR' && it.durabilityMax > 0)
+                  Positioned(
+                    left: 0, right: 0, bottom: 6,
+                    child: Center(
+                      child: _durabilityDotsForSlot(
+                        slot, max: it.durabilityMax, used: it.durabilityUsed,
+                        color: Colors.white, size: 16, spacing: 6,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
     );
   }
+  final sz = _slotSize(slot);
+  // Draggable si item présent
+  final childCard = (it == null)
+    ? _buildCard()
+    : LongPressDraggable<_DragPayload>(
+        data: _DragPayload(
+          from: slot,
+          item: it,
+          occupied: _allSlotsHolding(it.id),
+        ),
+
+        // 👉 feedback à la TAILLE RÉELLE de la carte
+       feedback: Opacity(
+          opacity: 0.85,
+          child: Material(
+            type: MaterialType.transparency,
+            child: SizedBox(width: sz.width, height: sz.height, child: _buildCard()),
+          ),
+        ),
+        // Plus AUCUN offset manuel
+        feedbackOffset: Offset.zero,
+        // Centre du widget sous le doigt
+        dragAnchorStrategy: (d, ctx, pos) => _centerAnchorFor(slot, d, ctx, pos),
+
+        childWhenDragging: Opacity(opacity: 0.35, child: _buildCard()),
+        child: _buildCard(),
+      );
+
+return DragTarget<_DragPayload>(
+  onWillAccept: (d) {
+    final ok = d != null && _canDropHere(d, slot);
+    if (ok) setState(() => _dragHover = slot);
+    return ok;
+  },
+  onLeave: (_) => setState(() => _dragHover = null),
+  onAccept: (d) async {
+    setState(() => _dragHover = null);
+    await _performDrop(d, slot);
+  },
+  builder: (_, __, ___) => GestureDetector(
+    onTap: () => _pickItemForSlot(slot),
+    onLongPress: () => _unequip(slot),
+    child: childCard,
+  ),
+);
+}
+
 
   Widget _itemBadgeFor(EquippedItem it) {
     String? text;

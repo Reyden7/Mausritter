@@ -124,6 +124,8 @@ class _ItemsAdminPageState extends State<ItemsAdminPage> {
     'LIGHT',
     'RATION',
     'OTHER',
+    'CONDITION',
+    'SPELL'
   ];
   // Slots compatibles
   static const slots = ['PAW_MAIN', 'PAW_OFF', 'BODY', 'PACK'];
