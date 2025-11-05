@@ -548,6 +548,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
   DateTime _lastSave = DateTime.fromMillisecondsSinceEpoch(0);
   bool isDead = false;
   final pepinCtrl = TextEditingController(text: '0');
+  final journalCtrl = TextEditingController();
   int pepinCur = 0;
 
   void _scheduleAutoSave() {
@@ -605,6 +606,7 @@ class _PlayerSheetPageState extends State<PlayerSheetPage> {
     xpCtrl.dispose();
     pepinCtrl.dispose();
     super.dispose();
+    journalCtrl.dispose();
   }
 
   bool _isPack(SlotType s) =>
@@ -644,7 +646,52 @@ List<SlotType> _findContiguousFreePacks(int need, {SlotType? preferredStart}) {
   return [];
 }
 
+Future<void> _openJournalDialog() async {
+  await showDialog(
+    context: context,
+    barrierDismissible: true,
+    builder: (ctx) {
+      final isMobile = MediaQuery.of(ctx).size.width < 600;
 
+      return Dialog(
+        insetPadding: EdgeInsets.symmetric(
+          horizontal: isMobile ? 0 : 80,
+          vertical: isMobile ? 0 : 60,
+        ),
+        child: Scaffold(
+          backgroundColor: Colors.white,
+          appBar: AppBar(
+            title: const Text("Journal d'aventure"),
+            automaticallyImplyLeading: false,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+          body: Padding(
+            padding: const EdgeInsets.all(12),
+            child: TextField(
+              controller: journalCtrl,
+              maxLines: null,
+              expands: true, // <-- clé pour remplir tout l'espace
+              textAlign: TextAlign.left,
+              keyboardType: TextInputType.multiline,
+              textInputAction: TextInputAction.newline,
+              decoration: const InputDecoration(
+                hintText: "Écris ici tes notes, rencontres, loot, indices…",
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.all(12),
+              ),
+              onChanged: (_) => _scheduleAutoSave(),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
 
   // ------- Sélecteur d’items filtrés par slot + recherche -------
 Future<void> _pickItemForSlot(SlotType slot) async {
@@ -1001,15 +1048,13 @@ if (slotTag(slot) == 'PACK') {
 
   void _hydrateFromRow(Map<String, dynamic> r) {
   _characterId = r['id'] as String;
-
   nameCtrl.text = (r['name'] ?? '') as String;
   backgroundCtrl.text = (r['background'] ?? '') as String;
-
+  journalCtrl.text = (r['journal'] ?? '') as String;
   level = (r['level'] ?? 1) as int;
   levelCtrl.text = '$level';
   xp = (r['xp'] ?? 0) as int;
   xpCtrl.text = '$xp';
-
   // --- Pepins
   pepinCur = (r['pepin_cur'] ?? 0) as int? ?? 0;
   pepinCtrl.text = '$pepinCur';
@@ -1180,6 +1225,7 @@ if (slotTag(slot) == 'PACK') {
         'wil': {'max': wilMax, 'cur': wilCur},
         'hp' : {'max': hpMax , 'cur': hpCur },
       },
+      'journal': journalCtrl.text.trim(),
     };
 
     await supa.from('characters').update(payload).eq('id', id);
@@ -1466,23 +1512,35 @@ Widget build(BuildContext context) {
       backgroundColor: Colors.white,
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
-        title: const Text('Fiche de personnage'),
-        centerTitle: false,
-        actions: [
-          
-          const SizedBox(width: 4),
-          TextButton(
-            onPressed: isDead ? null : _killMouse,
-            style: TextButton.styleFrom(
-              foregroundColor: isDead ? Colors.grey : Colors.red.shade800,
-            ),
-            child: const Text(
-              "TUER !",
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+      title: Row(
+        children: [
+          const Text('Fiche de personnage'),
+          // Le bouton “Journal” centré horizontalement
+          Expanded(
+            child: Center(
+              child: FilledButton.tonal(
+                onPressed: _openJournalDialog,
+                child: const Text('Journal'),
+              ),
             ),
           ),
         ],
       ),
+      centerTitle: false,
+      actions: [
+        const SizedBox(width: 4),
+        TextButton(
+          onPressed: isDead ? null : _killMouse,
+          style: TextButton.styleFrom(
+            foregroundColor: isDead ? Colors.grey : Colors.red.shade800,
+          ),
+          child: const Text(
+            "TUER !",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ),
+      ],
+    ),
       body: SafeArea(
         child: LayoutBuilder(
           builder: (ctx, c) {
