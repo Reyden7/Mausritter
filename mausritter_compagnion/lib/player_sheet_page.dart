@@ -966,11 +966,27 @@ Future<void> _pickItemForSlot(SlotType slot) async {
   
   // Requête serveur avec filtre texte (nom + description)
   Future<List<dynamic>> fetch(String q) async {
+    final uid = supa.auth.currentUser!.id;
+
+    // On récupère le MJ du joueur
+    final prof = await supa
+        .from('profiles')
+        .select('mj_id')
+        .eq('id', uid)
+        .maybeSingle();
+
+    final mjId = prof?['mj_id'];
+
+    if (mjId == null) {
+      // Aucun MJ de lié → aucun item affiché
+      return [];
+    }
+
     var req = supa
         .from('items')
         .select(
           'id,name,image_url,durability_max,compatible_slots,category,damage,defense,two_handed,two_body,pack_size,description,pack_shape,pack_can_rotate',
-        )
+        ).eq('created_by', mjId)  
         .contains('compatible_slots', [tag]);
 
     final s = q.trim();

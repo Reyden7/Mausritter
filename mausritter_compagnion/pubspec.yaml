@@ -15,7 +15,7 @@ dependencies:
   supabase_flutter: ^2.10.3
   image_picker: ^1.2.0
   google_fonts: ^6.2.1   # ← ICI (dans dependencies)
-
+  app_links: ^6.4.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -179,7 +179,11 @@ List<int> _normalizePackShape(List<dynamic>? raw) {
     _query = q.trim();
   });
 
-  var req = supa.from('items').select();
+  final uid = supa.auth.currentUser!.id;
+
+  var req = supa.from('items').select()
+      .eq('created_by', uid);
+
   if (_query.isNotEmpty) {
     req = req.or('name.ilike.%$_query%,description.ilike.%$_query%');
   }
@@ -307,7 +311,7 @@ List<int> _normalizePackShape(List<dynamic>? raw) {
     bool twoBody   = (existing?['two_body']   as bool?) ?? false;
     bool packCanRotate = (existing?['pack_can_rotate'] as bool?) ?? true;
     // NEW: shape PACK 3x2 : indices 0..5
-    List<int> packShape = _normalizePackShape(existing?['pack_shape']);
+    List<int> packShape = List<int>.from(_normalizePackShape(existing?['pack_shape']));
 
     // Spécifiques
     String? damage = existing?['damage'] as String?;
@@ -510,7 +514,7 @@ List<int> _normalizePackShape(List<dynamic>? raw) {
                           ),
                         ),
                         TextButton.icon(
-                          onPressed: () => setS(() => packShape.clear()),
+                          onPressed: () => setS(() => packShape = []),
                           icon: const Icon(Icons.restart_alt, size: 18),
                           label: const Text('Réinitialiser'),
                         ),
