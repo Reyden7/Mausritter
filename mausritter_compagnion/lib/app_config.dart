@@ -1,4 +1,4 @@
 class AppConfig {
-  static const supabaseUrl = 'https://btmrpghvjagxvdgambjc.supabase.co';
-  static const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0bXJwZ2h2amFneHZkZ2FtYmpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEzMTMyMTUsImV4cCI6MjA3Njg4OTIxNX0.yD0pLCE7diZ5QQFt_rFCOyGOosu16OSPKa3HAnG5klg';
+  static const supabaseUrl = 'https://ntbegkjiidixtrbosuzu.supabase.co';
+  static const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50YmVna2ppaWRpeHRyYm9zdXp1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMTkyOTIsImV4cCI6MjA5NDg5NTI5Mn0.hhOKU7aIjKMtbc6MMoUebB4MyivgDh8jr3q8Ki5Psx4';
 }
